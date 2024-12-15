@@ -1,4 +1,4 @@
-# Zeroth Bot - Voice-Controlled Robot with Digital Twin
+# PROJECT ZERO - Voice-Controlled Robot with Digital Twin
 
 A hackathon project that combines voice control, computer vision, and digital twin capabilities to create an extensible robot control system.
 
@@ -49,13 +49,12 @@ pip install -r requirements.txt
 ```
 2. Configure settings in `config/config.yaml`:
 ```yaml
-yaml
 monitor:
-capture_interval: 5.0
-save_dir: "pictures/webcam"
-platform: "zeroth"
-voice_mode: true
-whisper_model: "small"
+    capture_interval: 5.0
+    save_dir: "pictures/webcam"
+    platform: "zeroth"
+    voice_mode: true
+    whisper_model: "small"
 ```
 3. Run the robot monitor:
 ```bash
