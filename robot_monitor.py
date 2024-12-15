@@ -1,6 +1,5 @@
 import time
 import cv2
-import anthropic
 from datetime import datetime
 import os
 import argparse
@@ -8,20 +7,19 @@ from image_processor import ImageProcessor
 from skill_library import SkillLibrary, RobotPlatform
 from typing import List, Tuple, Optional, Dict
 from robot import Robot
-import re
 import threading
+from model_handler import ModelHandler
 
 class RobotMonitor:
-    def __init__(self, capture_interval=5, save_dir="pictures/webcam", max_size=1568, platform=RobotPlatform.ZEROTH):
-        """
-        Initialize the robot monitoring system
-        Args:
-            capture_interval (int): Seconds between captures
-            save_dir (str): Directory to save captured images
-            max_size (int): Maximum size for image's longest edge
-            platform (RobotPlatform): Robot platform
-        """
-        self.client = anthropic.Anthropic()
+    def __init__(self, 
+                 capture_interval=5, 
+                 save_dir="pictures/webcam", 
+                 max_size=1568, 
+                 platform=RobotPlatform.ZEROTH,
+                 voice_mode=False,
+                 voice_processor=None):
+        """Initialize the robot monitoring system"""
+        self.model_handler = ModelHandler()
         self.capture_interval = capture_interval
         self.cap = None
         self.save_dir = save_dir
@@ -32,6 +30,10 @@ class RobotMonitor:
         self.robot: Optional[Robot] = None
         self.walk_stop_event = None
         self.walk_thread = None
+        
+        # Voice mode settings
+        self.voice_mode = voice_mode
+        self.voice_processor = voice_processor
         
         # Create save directory if it doesn't exist
         os.makedirs(self.save_dir, exist_ok=True)
@@ -68,69 +70,34 @@ class RobotMonitor:
         
         return image_data, save_path, image_info
 
-    def plan_task(self, task_description: str) -> List[Tuple[str, float]]:
-        """
-        Break down high-level task into sequence of skills using SayCan approach
-        Returns list of (skill_name, confidence) tuples
-        """
-        # Construct prompt for task planning
-        prompt = f"""You are a helpful robot assistant that can execute the following skills:
-
-{self.skill_library.get_skill_descriptions()}
-
-For the task of moving to another spot: "{task_description}"
-
-Break this down into a sequence of skills from the above list. You MUST format your response exactly as shown:
-1. [skill_name]: Brief justification
-2. [skill_name]: Brief justification
-...
-
-IMPORTANT: Each skill name MUST be enclosed in square brackets []. 
-Only use skills from the provided list. Be concise but clear in your justifications.
-If there is nothing to do, respond with: 1. [wave]: Default greeting action
-"""
-
-        # Get plan from Claude
-        message = self.client.messages.create(
-            model="claude-3-sonnet-20240229",
-            max_tokens=1024,
-            messages=[{
-                "role": "user", 
-                "content": prompt
-            }]
+    def process_frame_with_voice(self, image_data: str, voice_command: Optional[str] = None) -> str:
+        """Process frame with optional voice command input"""
+        # Get model's analysis
+        response = self.model_handler.analyze_scene(
+            image_data, 
+            self.skill_library.get_skill_descriptions(),
+            voice_command
         )
         
-        # Parse response into skill sequence
-        plan = []
-        for line in message.content.split('\n'):
-            if not line.strip() or not line[0].isdigit():
-                continue
-            # Extract skill name from between [ ]
-            if '[' in line and ']' in line:
-                skill_name = line[line.find('[')+1:line.find(']')]
-                if skill_name in self.skill_library.skills:
-                    # Get affordance score for this skill
-                    affordance = self.skill_library.skills[skill_name].get_affordance()
-                    plan.append((skill_name, affordance))
+        # Validate response format
+        valid_steps = self.model_handler.validate_response(response)
+        if not valid_steps:
+            response += "\n\nNo valid steps were found in the response."
+            return response
+            
+        # Extract and execute skills
+        skills = self.model_handler.extract_skills(response, self.skill_library.skills)
+        if skills:
+            print("\nExecuting planned skills:")
+            results = self.run_skills(skills)
+            
+            # Add execution results to response
+            response += "\n\nExecution results:"
+            for skill, success in results.items():
+                status = "✓ Success" if success else "✗ Failed"
+                response += f"\n- [{skill}]: {status}"
         
-        return plan
-
-    def extract_skills_from_response(self, response: str) -> List[str]:
-        """
-        Extract skill names from Claude's response using stricter regex
-        Returns list of skill names in order
-        """
-        skills = []
-        # Look for numbered list items with [skill_name]:
-        for line in response.split('\n'):
-            matches = re.findall(r'^\d+\.\s*\[([^\]]+)\]:', line)
-            if matches:
-                skill_name = matches[0].strip()
-                if skill_name in self.skill_library.skills:
-                    skills.append(skill_name)
-                else:
-                    print(f"Warning: Unknown skill '{skill_name}' found in response")
-        return skills
+        return response
 
     def run_skills(self, skills: List[str]) -> Dict[str, bool]:
         """
@@ -169,92 +136,38 @@ If there is nothing to do, respond with: 1. [wave]: Default greeting action
                 results[skill_name] = False
         return results
 
-    def process_frame(self, image_data):
-        """Send frame to Claude and get response"""
-        message = self.client.messages.create(
-            model="claude-3-sonnet-20240229",
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": image_data,
-                            },
-                        },
-                        {
-                            "type": "text", 
-                            "text": f"""Given an external view of a robot. What task needs to be done?
-                            After describing the scene, break down the needed task into specific steps using available skills.
-                            
-                            Available skills:
-                            {self.skill_library.get_skill_descriptions()}
-                            
-                            You MUST format your response EXACTLY as shown:
-                            Scene description: <brief description>
-                            Required task: <task description>
-                            Planned steps:
-                            1. [skill_name]: Brief justification
-                            2. [skill_name]: Brief justification
-                            ...
-
-                            IMPORTANT RULES:
-                            - Each skill name MUST be enclosed in square brackets []
-                            - Only use skills from the provided list
-                            - Each step MUST start with a number followed by a period
-                            - Each step MUST have exactly one pair of square brackets
-                            - Each step MUST have a colon and justification after the brackets"""
-                        }
-                    ],
-                }
-            ],
-        )
-        
-        # Extract the text content from the response
-        response_content = message.content[0].text if isinstance(message.content, list) else message.content
-        
-        # Add stricter validation of response format
-        if "Planned steps:" in response_content:
-            steps = response_content.split("Planned steps:")[1].strip().split("\n")
-            valid_steps = []
-            for step in steps:
-                if re.match(r'^\d+\.\s*\[[^\]]+\]:', step):
-                    valid_steps.append(step)
-                else:
-                    print(f"Warning: Invalid step format: {step}")
-            
-            if not valid_steps:
-                print("Warning: No valid steps found in response")
-                response_content += "\n\nNo valid steps were found in the response."
-        
-        # Extract and execute skills if task identified
-        skills = self.extract_skills_from_response(response_content)
-        if skills:
-            print("\nExecuting planned skills:")
-            results = self.run_skills(skills)
-            
-            # Add execution results to response
-            response_content += "\n\nExecution results:"
-            for skill, success in results.items():
-                status = "✓ Success" if success else "✗ Failed"
-                response_content += f"\n- [{skill}]: {status}"
-        
-        return response_content
-
     def execute_skill(self, skill_name: str, **kwargs):
         """Execute a skill on the current platform"""
         if self.robot is None:
             raise RuntimeError("Robot not initialized. Call initialize_robot() first.")
         return self.skill_library.execute_skill(skill_name, self.platform, self.robot, **kwargs)
 
+    def get_voice_command(self) -> Optional[str]:
+        """Get transcribed voice command from the voice processor"""
+        if not self.voice_mode or not self.voice_processor:
+            return None
+        
+        try:
+            # Get command if available
+            command = self.voice_processor.get_command()
+            if command:
+                print(f"Voice command received: {command}")
+                
+                # Get recent context
+                context = self.voice_processor.get_recent_context()
+                if len(context) > 1:
+                    print("Recent conversation context:")
+                    for text in context[-3:]:  # Show last 3 entries
+                        print(f"  - {text}")
+                    
+                return command
+        except Exception as e:
+            print(f"Error processing voice command: {e}")
+        return None
+
     def run_monitoring(self):
         """Main monitoring loop"""
         try:
-            # Initialize robot first
             self.initialize_robot()
             self.initialize_camera()
             
@@ -262,37 +175,51 @@ If there is nothing to do, respond with: 1. [wave]: Default greeting action
             print(f"Saving images to: {self.save_dir}")
             print(f"Capture interval: {self.capture_interval} seconds")
             print(f"Max image dimension: {self.processor.max_size}px")
+            print(f"Voice mode: {'enabled' if self.voice_mode else 'disabled'}")
+            
+            # Start voice processing if enabled
+            if self.voice_mode and self.voice_processor:
+                self.voice_processor.start_listening()
             
             while True:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"\n[{timestamp}] Capturing frame...")
                 
+                voice_command = self.get_voice_command() if self.voice_mode else None
                 image_data, save_path, (width, height, mp) = self.capture_frame()
+                
                 print(f"Saved image to: {save_path}")
                 print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
                 
-                response = self.process_frame(image_data)
-                print(f"Claude's analysis and execution results:\n{response}")
+                response = self.process_frame_with_voice(image_data, voice_command)
+                print(f"Analysis and execution results:\n{response}")
                 
                 time.sleep(self.capture_interval)
                 
         except KeyboardInterrupt:
             print("\nMonitoring stopped by user")
         finally:
-            # Stop any ongoing walking
-            if self.walk_stop_event is not None:
-                self.walk_stop_event.set()
-                if self.walk_thread is not None:
-                    self.walk_thread.join(timeout=2)
+            # Stop voice processing
+            if self.voice_mode and self.voice_processor:
+                self.voice_processor.stop_listening()
+            self.cleanup()
+
+    def cleanup(self):
+        """Cleanup resources"""
+        # Stop any ongoing walking
+        if self.walk_stop_event is not None:
+            self.walk_stop_event.set()
+            if self.walk_thread is not None:
+                self.walk_thread.join(timeout=2)
                     
-            if self.cap is not None:
-                self.cap.release()
-            if self.robot is not None:
-                try:
-                    self.robot.disable_motors()
-                    print("Robot motors disabled")
-                except Exception as e:
-                    print(f"Error disabling robot motors: {e}")
+        if self.cap is not None:
+            self.cap.release()
+        if self.robot is not None:
+            try:
+                self.robot.disable_motors()
+                print("Robot motors disabled")
+            except Exception as e:
+                print(f"Error disabling robot motors: {e}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Robot Monitor with Webcam')
@@ -317,6 +244,9 @@ def parse_args():
                        choices=['zeroth', 'generic'],
                        default="zeroth",
                        help='Robot platform (default: zeroth)')
+    parser.add_argument('-v', '--voice-mode',
+                       action='store_true',
+                       help='Enable voice command mode')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -327,7 +257,8 @@ if __name__ == "__main__":
         capture_interval=args.interval,
         save_dir=args.directory,
         max_size=args.max_size,
-        platform=RobotPlatform[args.platform.upper()]
+        platform=RobotPlatform[args.platform.upper()],
+        voice_mode=args.voice_mode
     )
     
     try:
