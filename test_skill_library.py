@@ -180,21 +180,14 @@ def parse_args():
                        help='Only test walking functionality without LLM validation')
     parser.add_argument('--walk-duration',
                        type=float,
-                       default=5.0,
-                       help='Duration of walking test in seconds (default: 5.0)')
+                       help='Duration of walking test in seconds')
     parser.add_argument('--torque-values',
                        type=str,
-                       default="40.0,32.0,24.0",
-                       help='Comma-separated list of specific torque values to test (default: 40.0,32.0,24.0)')
+                       help='Comma-separated list of specific torque values to test')
     return parser.parse_args()
 
 def test_walking(duration: float = None, torque_values: str = None):
-    """Test walking functionality with different specific torque values
-    
-    Args:
-        duration: Optional override for test duration in seconds
-        torque_values: Optional override for torque values as comma-separated string
-    """
+    """Test walking functionality with different specific torque values"""
     print("\n=== Starting Walking Tests ===")
     
     # Load test parameters from yaml
@@ -203,12 +196,24 @@ def test_walking(duration: float = None, torque_values: str = None):
     
     # Get test parameters with CLI overrides
     test_params = params.get('testing', {}).get('walking', {})
-    test_duration = duration or test_params.get('duration', 5.0)
-    yaml_torques = test_params.get('torque_values', [40.0, 32.0, 24.0])
-    pause_time = test_params.get('pause_between', 3.0)
+    if not test_params:
+        raise ValueError("Missing required 'testing.walking' configuration in param.yaml")
+        
+    test_duration = duration or test_params.get('duration')
+    if not test_duration:
+        raise ValueError("Missing required 'duration' in param.yaml testing.walking configuration")
+        
+    pause_time = test_params.get('pause_between')
+    if not pause_time:
+        raise ValueError("Missing required 'pause_between' in param.yaml testing.walking configuration")
     
     # Use CLI torque values if provided, otherwise use yaml values
-    torques = [float(t) for t in torque_values.split(',')] if torque_values else yaml_torques
+    if torque_values:
+        torques = [float(t) for t in torque_values.split(',')]
+    else:
+        torques = test_params.get('torque_values')
+        if not torques:
+            raise ValueError("Missing required 'torque_values' in param.yaml testing.walking configuration")
     
     print(f"\nTest parameters:")
     print(f"Duration per test: {test_duration} seconds")

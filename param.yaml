@@ -14,12 +14,12 @@ robot:
     default_torque: 50.0
     torque_enable: true
     torque_scale: 0.8
-    walking_torque: 24.0
+    walking_torque: 30.0
 testing:
   walking:
     duration: 5.0
     pause_between: 3.0
     torque_values:
-    - 48.0
-    - 44.0
-    - 40.0
+    - 30.0
+    - 28.0
+    - 26.0
