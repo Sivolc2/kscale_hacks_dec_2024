@@ -24,31 +24,6 @@ class RobotCommand:
     command_fn: Callable
     params: Dict[str, Any] = None
 
-# Define default joint positions with correct mapping and values
-RESET_POSITIONS = {
-    # Left Leg
-    "left_hip_pitch": 28.4765625,      # ID 10
-    "left_hip_yaw": 42.71484375,       # ID 9
-    "left_hip_roll": 0.087890625,      # ID 8
-    "left_knee_pitch": -41.66015625,   # ID 7
-    "left_ankle_pitch": -17.578125,    # ID 6
-    
-    # Right Leg
-    "right_hip_pitch": -28.65234375,   # ID 5
-    "right_hip_yaw": -42.451171875,    # ID 4
-    "right_hip_roll": 0.0,             # ID 3
-    "right_knee_pitch": 41.572265625,  # ID 2
-    "right_ankle_pitch": 17.9296875,   # ID 1
-    
-    # Arms
-    "right_elbow_yaw": 0.0,            # ID 11
-    "right_shoulder_yaw": 0.0,         # ID 12
-    "right_shoulder_pitch": 0.17578125, # ID 13
-    "left_shoulder_pitch": -0.17578125, # ID 14
-    "left_shoulder_yaw": 0.0,          # ID 15
-    "left_elbow_yaw": 0.0              # ID 16
-}
-
 @dataclass 
 class Skill:
     name: str
@@ -226,7 +201,7 @@ class SkillLibrary:
             platform_commands={
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, **kwargs: robot.set_desired_positions(RESET_POSITIONS)
+                    command_fn=lambda robot, **kwargs: robot.set_initial_positions()
                 )
             },
             objective="Robot is standing upright with both feet flat on the ground",
@@ -235,20 +210,39 @@ class SkillLibrary:
             requires_validation=True
         ))
 
-        # Walking skills
+        # Slow walk skill
         self.add_skill(Skill(
-            name="walk_forward",
-            description="Make the robot walk forward",
+            name="slow_walk",
+            description="Make the robot walk forward slowly and carefully using pre-defined positions",
             platform_commands={
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, **kwargs: self._zeroth_walk(
+                    command_fn=lambda robot, **kwargs: self._zeroth_slow_walk(
                         robot,
                         kwargs.get('stop_event')
                     )
                 )
             },
-            objective="Robot has moved forward while maintaining stable walking gait",
+            objective="Robot has moved forward slowly while maintaining stability",
+            timeout_seconds=20.0,
+            check_interval=5.0,
+            requires_validation=True
+        ))
+
+        # Speed walk skill (using RL policy)
+        self.add_skill(Skill(
+            name="speed_walk",
+            description="Make the robot walk forward quickly using learned policy (less stable but faster)",
+            platform_commands={
+                RobotPlatform.ZEROTH: RobotCommand(
+                    platform=RobotPlatform.ZEROTH,
+                    command_fn=lambda robot, **kwargs: self._zeroth_speed_walk(
+                        robot,
+                        kwargs.get('stop_event')
+                    )
+                )
+            },
+            objective="Robot has moved forward rapidly while attempting to maintain stability",
             timeout_seconds=20.0,
             check_interval=5.0,
             requires_validation=True
@@ -261,80 +255,58 @@ class SkillLibrary:
             platform_commands={
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, **kwargs: robot.set_desired_positions(RESET_POSITIONS)
+                    command_fn=lambda robot, **kwargs: robot.set_initial_positions()
                 )
             },
             requires_validation=False  # No validation needed for reset
         ))
 
-    def _zeroth_walk(self, robot: Robot, stop_event: threading.Event):
-        """Implementation of walking for Zeroth robot using ONNX model"""
-        # Load parameters from yaml
-        with open(self.config_path, 'r') as f:
-            params = yaml.safe_load(f)
-        
-        # Get walking parameters
-        walking_params = params.get('testing', {}).get('walking', {})
-        cmd_vx = walking_params.get('velocity_x', 0.3)  # Default to 0.3 if not specified
-        
-        print(f"Walking with velocity: {cmd_vx}")
-        print("Restoring original offsets")
-        
-        if self.model_controller is None:
-            print("ERROR: Model controller is not initialized")
-            print("Please ensure the ONNX model exists at ./models/walking_micro.onnx")
-            print("Current working directory:", os.getcwd())
-            raise RuntimeError("Walking model not initialized - missing ONNX file")
-        
-        # Get torque settings from params
-        with open(self.config_path, 'r') as f:
-            params = yaml.safe_load(f)
-        
-        # Get walking torque value
-        walking_torque = params['robot']['servos'].get('walking_torque', 32.0)
-        print(f"Setting walking torque to {walking_torque:.1f}")
-        
-        # Set walking torque
-        servo_ids = [joint.servo_id for joint in robot.joints]
-        robot.hal.servo.set_torque(
-            [(servo_id, walking_torque) for servo_id in servo_ids]
-        )
-        
-        # Restore walking offsets like in run.py
-        robot.joint_dict["left_hip_pitch"].offset_deg = 0.23 * 180/3.14159
-        robot.joint_dict["left_hip_yaw"].offset_deg = 45.0
-        robot.joint_dict["left_hip_roll"].offset_deg = 0.0
-        robot.joint_dict["left_knee_pitch"].offset_deg = -0.741 * 180/3.14159
-        robot.joint_dict["left_ankle_pitch"].offset_deg = -0.5 * 180/3.14159
-        robot.joint_dict["right_hip_pitch"].offset_deg = -0.23 * 180/3.14159
-        robot.joint_dict["right_hip_yaw"].offset_deg = -45.0
-        robot.joint_dict["right_hip_roll"].offset_deg = 0.0
-        robot.joint_dict["right_knee_pitch"].offset_deg = 0.741 * 180/3.14159
-        robot.joint_dict["right_ankle_pitch"].offset_deg = 0.5 * 180/3.14159
-        robot.joint_dict["right_elbow_yaw"].offset_deg = 0.0
-        robot.joint_dict["right_shoulder_yaw"].offset_deg = 0.0
-        robot.joint_dict["right_shoulder_pitch"].offset_deg = 0.0
-        robot.joint_dict["left_shoulder_pitch"].offset_deg = 0.0
-        robot.joint_dict["left_shoulder_yaw"].offset_deg = 0.0
-        robot.joint_dict["left_elbow_yaw"].offset_deg = 0.0
+    def _zeroth_slow_walk(self, robot: Robot, stop_event: threading.Event):
+        """Implementation of slow walking using pre-defined positions"""
+        try:
+            # Load walk positions from yaml
+            with open("param.yaml", 'r') as f:
+                params = yaml.safe_load(f)
+            
+            walk_positions = params['robot']['walk_positions']['slow']
+            if not walk_positions:
+                raise ValueError("Missing slow walk positions in param.yaml")
 
+            step_duration = 1.0  # Time for each position change
+            
+            while not stop_event.is_set():
+                # Forward position
+                robot.set_desired_positions(walk_positions)
+                time.sleep(step_duration)
+                
+                if stop_event.is_set():
+                    break
+                    
+                # Return to neutral
+                robot.set_initial_positions()
+                time.sleep(step_duration)
+                
+        except Exception as e:
+            print(f"Error during slow walk: {e}")
+            raise
+
+    def _zeroth_speed_walk(self, robot: Robot, stop_event: threading.Event):
+        """Implementation of speed walking using RL policy"""
         if self.model_controller is None:
             raise RuntimeError("Walking model not initialized")
             
         try:
-            # Run model inference for walking
-            print(f"Starting model-based walking with velocity {cmd_vx}...")
+            # Use higher velocity for speed walking
             self.model_controller.run_inference(
                 robot=robot,
                 stop_event=stop_event,
-                cmd_vx=cmd_vx,  # Use passed velocity
-                cmd_vy=0.0,  # Lateral velocity 
-                cmd_dyaw=0.0  # Yaw rate
+                cmd_vx=0.4,  # Higher velocity
+                cmd_vy=0.0,
+                cmd_dyaw=0.0
             )
-            print("Walking completed")
             
         except Exception as e:
-            print(f"Error during model-based walking: {e}")
+            print(f"Error during speed walk: {e}")
             raise
 
     def _zeroth_wave(self, robot: Robot):

@@ -75,6 +75,13 @@ class ModelController:
             cmd_dyaw: Yaw rate command
         """
         action = np.zeros((self.cfg.num_actions), dtype=np.double)
+        
+        # Load hip adjustment from params
+        with open("param.yaml", 'r') as f:
+            params = yaml.safe_load(f)
+        hip_adjust = params['robot']['servos'].get('hip_adjust', 20.0)  # Default to 20.0 if not found
+        
+        print(f"Using hip adjustment of {hip_adjust} degrees for walking stability")
 
         hist_obs = deque()
         for _ in range(self.cfg.frame_stack):
@@ -100,6 +107,10 @@ class ModelController:
             # Get robot state
             feedback_positions = robot.get_feedback_positions()
             feedback_velocities = robot.get_feedback_velocities()
+
+            # Add hip adjustment for stability
+            feedback_positions["left_hip_pitch"] += hip_adjust
+            feedback_positions["right_hip_pitch"] -= hip_adjust
 
             # Convert to radians
             current_positions_np = np.radians(

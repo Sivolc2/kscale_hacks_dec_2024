@@ -6,7 +6,7 @@ import cv2
 import base64
 import argparse
 import yaml
-from skill_library import SkillLibrary, RobotPlatform, RESET_POSITIONS
+from skill_library import SkillLibrary, RobotPlatform
 from robot import Robot
 from model_handler import ModelHandler
 
@@ -54,8 +54,8 @@ def test_skill_library(dummy_mode=False):
         robot.initialize()
         
         print("\n1. Testing 'reset_positions' skill...")
-        # Simply reset to default positions
-        robot.set_desired_positions(RESET_POSITIONS)
+        # Use set_initial_positions instead of RESET_POSITIONS
+        robot.set_initial_positions()
         time.sleep(2)
         
         # Test sequence of skills
@@ -125,7 +125,7 @@ def test_skill_library(dummy_mode=False):
                 time.sleep(2)
         
         print("\nFinal position reset...")
-        robot.set_desired_positions(RESET_POSITIONS)
+        robot.set_initial_positions()
         
         print("\n=== Test completed successfully! ===")
         
@@ -194,30 +194,22 @@ def test_walking(duration: float = None, torque_values: str = None):
     with open("param.yaml", 'r') as f:
         params = yaml.safe_load(f)
     
-    # Get test parameters with CLI overrides
+    # Get test parameters
     test_params = params.get('testing', {}).get('walking', {})
+    hip_adjust = params['robot']['servos'].get('hip_adjust', 20.0)
+    
     if not test_params:
         raise ValueError("Missing required 'testing.walking' configuration in param.yaml")
         
-    test_duration = duration or test_params.get('duration')
-    if not test_duration:
-        raise ValueError("Missing required 'duration' in param.yaml testing.walking configuration")
-        
-    pause_time = test_params.get('pause_between')
-    if not pause_time:
-        raise ValueError("Missing required 'pause_between' in param.yaml testing.walking configuration")
-    
-    # Use CLI torque values if provided, otherwise use yaml values
-    if torque_values:
-        torques = [float(t) for t in torque_values.split(',')]
-    else:
-        torques = test_params.get('torque_values')
-        if not torques:
-            raise ValueError("Missing required 'torque_values' in param.yaml testing.walking configuration")
+    step_duration = 0.8  # Duration of each step in seconds
+    pause_duration = 0.3  # Time to pause between steps
+    num_steps = 3        # Number of steps per test
     
     print(f"\nTest parameters:")
-    print(f"Duration per test: {test_duration} seconds")
-    print(f"Pause between tests: {pause_time} seconds")
+    print(f"Step duration: {step_duration} seconds")
+    print(f"Pause duration: {pause_duration} seconds")
+    print(f"Steps per test: {num_steps}")
+    print(f"Hip adjustment: {hip_adjust} degrees")
     print(f"Testing torque values: {torques}")
     
     skill_lib = SkillLibrary()
@@ -227,45 +219,75 @@ def test_walking(duration: float = None, torque_values: str = None):
         print("\nInitializing robot...")
         robot.initialize()
         
-        # Test each torque value
+        # Test sequence: slow walk -> speed walk for each torque value
         for torque in torques:
-            print(f"\n--- Testing walking torque: {torque:.1f} ---")
+            print(f"\n=== Testing torque: {torque:.1f} ===")
             
             # Update param.yaml with new torque value
             params['robot']['servos']['walking_torque'] = torque
-            
             with open("param.yaml", 'w') as f:
                 yaml.safe_dump(params, f)
             
-            print("\nResetting to initial position...")
-            robot.set_desired_positions(RESET_POSITIONS)
-            time.sleep(2)
+            # Test slow walk
+            print("\n--- Testing Slow Walk ---")
+            print("Setting initial position...")
+            robot.set_initial_positions()
+            time.sleep(1.0)
             
-            print(f"\nStarting walk test for {test_duration} seconds...")
-            stop_event = threading.Event()
-            walk_thread = threading.Thread(
-                target=lambda: skill_lib.execute_skill(
-                    "walk_forward",
-                    RobotPlatform.ZEROTH,
-                    robot,
-                    stop_event=stop_event
+            for step in range(num_steps):
+                print(f"\nSlow walk step {step + 1}/{num_steps}")
+                stop_event = threading.Event()
+                walk_thread = threading.Thread(
+                    target=lambda: skill_lib.execute_skill(
+                        "slow_walk",
+                        RobotPlatform.ZEROTH,
+                        robot,
+                        stop_event=stop_event
+                    )
                 )
-            )
+                
+                walk_thread.start()
+                time.sleep(step_duration)
+                
+                print("Stopping step...")
+                stop_event.set()
+                walk_thread.join(timeout=1.0)
+                
+                # Simple pause between steps
+                time.sleep(pause_duration)
             
-            walk_thread.start()
-            print(f"Walking started with torque = {torque:.1f}")
-            time.sleep(test_duration)
-            print("Stopping walk...")
-            stop_event.set()
-            walk_thread.join(timeout=2)
+            # Reset before speed walk
+            print("\nResetting position before speed walk...")
+            robot.set_initial_positions()
+            time.sleep(2.0)
             
-            # Brief pause between tests
-            print(f"\nPausing for {pause_time} seconds between tests...")
-            time.sleep(pause_time)
+            # Test speed walk
+            print("\n--- Testing Speed Walk ---")
+            for step in range(num_steps):
+                print(f"\nSpeed walk step {step + 1}/{num_steps}")
+                stop_event = threading.Event()
+                walk_thread = threading.Thread(
+                    target=lambda: skill_lib.execute_skill(
+                        "speed_walk",
+                        RobotPlatform.ZEROTH,
+                        robot,
+                        stop_event=stop_event
+                    )
+                )
+                
+                walk_thread.start()
+                time.sleep(step_duration)
+                
+                print("Stopping step...")
+                stop_event.set()
+                walk_thread.join(timeout=1.0)
+                
+                # Simple pause between steps
+                time.sleep(pause_duration)
         
-        print("\nResetting to initial position...")
-        robot.set_desired_positions(RESET_POSITIONS)
-        time.sleep(2)
+        print("\nFinal reset to initial position...")
+        robot.set_initial_positions()
+        time.sleep(1.0)
         
         print("\n=== Walking tests completed! ===")
         
