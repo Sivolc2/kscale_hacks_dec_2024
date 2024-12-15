@@ -4,6 +4,8 @@ from typing import Dict, Callable, Optional, List, Any
 import numpy as np
 import threading
 from robot import Robot, RobotConfig
+from model_controller import ModelController
+import os
 
 class RobotPlatform(Enum):
     ZEROTH = "zeroth"
@@ -43,6 +45,20 @@ class Skill:
 class SkillLibrary:
     def __init__(self):
         self.skills: Dict[str, Skill] = {}
+        # Initialize model controller with path to ONNX model
+        self.model_controller = None
+        try:
+            # Use the same model path as run.py
+            model_path = "./models/walking_micro.onnx"
+            if not os.path.isfile(model_path):
+                print(f"ERROR: Model file not found at absolute path: {os.path.abspath(model_path)}")
+            else:
+                print(f"Found model at: {os.path.abspath(model_path)}")
+                self.model_controller = ModelController(model_path)
+                print("Successfully loaded model controller")
+        except Exception as e:
+            print(f"ERROR: Could not load walking model: {str(e)}")
+            print(f"Exception type: {type(e)}")
         self._initialize_basic_skills()
     
     def _initialize_basic_skills(self):
@@ -161,10 +177,17 @@ class SkillLibrary:
         ))
 
     def _zeroth_walk(self, robot: Robot, stop_event: threading.Event):
-        """Simplified implementation of walking for Zeroth robot"""
-        import time
+        """Implementation of walking for Zeroth robot using ONNX model"""
+        print("Walking")
+        print("Restoring original offsets")
         
-        # Restore walking offsets
+        if self.model_controller is None:
+            print("ERROR: Model controller is not initialized")
+            print("Please ensure the ONNX model exists at ./models/walking_micro.onnx")
+            print("Current working directory:", os.getcwd())
+            raise RuntimeError("Walking model not initialized - missing ONNX file")
+        
+        # Restore walking offsets like in run.py
         robot.joint_dict["left_hip_pitch"].offset_deg = 0.23 * 180/3.14159
         robot.joint_dict["left_hip_yaw"].offset_deg = 45.0
         robot.joint_dict["left_hip_roll"].offset_deg = 0.0
@@ -175,26 +198,31 @@ class SkillLibrary:
         robot.joint_dict["right_hip_roll"].offset_deg = 0.0
         robot.joint_dict["right_knee_pitch"].offset_deg = 0.741 * 180/3.14159
         robot.joint_dict["right_ankle_pitch"].offset_deg = 0.5 * 180/3.14159
-        
-        # Simple walking motion for testing
-        while not stop_event.is_set():
-            # Step 1: Left leg forward
-            robot.set_desired_positions({
-                "left_hip_pitch": 30.0,
-                "right_hip_pitch": -15.0,
-                "left_knee_pitch": -30.0,
-                "right_knee_pitch": 15.0
-            })
-            time.sleep(0.5)
+        robot.joint_dict["right_elbow_yaw"].offset_deg = 0.0
+        robot.joint_dict["right_shoulder_yaw"].offset_deg = 0.0
+        robot.joint_dict["right_shoulder_pitch"].offset_deg = 0.0
+        robot.joint_dict["left_shoulder_pitch"].offset_deg = 0.0
+        robot.joint_dict["left_shoulder_yaw"].offset_deg = 0.0
+        robot.joint_dict["left_elbow_yaw"].offset_deg = 0.0
+
+        if self.model_controller is None:
+            raise RuntimeError("Walking model not initialized")
             
-            # Step 2: Right leg forward
-            robot.set_desired_positions({
-                "left_hip_pitch": -15.0,
-                "right_hip_pitch": 30.0,
-                "left_knee_pitch": 15.0,
-                "right_knee_pitch": -30.0
-            })
-            time.sleep(0.5)
+        try:
+            # Run model inference for walking
+            print("Starting model-based walking...")
+            self.model_controller.run_inference(
+                robot=robot,
+                stop_event=stop_event,
+                cmd_vx=0.4,  # Forward velocity
+                cmd_vy=0.0,  # Lateral velocity 
+                cmd_dyaw=0.0  # Yaw rate
+            )
+            print("Walking completed")
+            
+        except Exception as e:
+            print(f"Error during model-based walking: {e}")
+            raise
 
     def _zeroth_wave(self, robot: Robot):
         """Implementation of waving for Zeroth robot"""

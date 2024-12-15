@@ -1,7 +1,9 @@
 anthropic
 httpx
 opencv-python
-pillow
-pygame
-onnxruntime
-matplotlib
+# pillow
+# pygame
+# onnx==1.17.0
+# onnxruntime==1.19.2
+# onnxscript
+# matplotlib

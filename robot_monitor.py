@@ -6,8 +6,10 @@ import os
 import argparse
 from image_processor import ImageProcessor
 from skill_library import SkillLibrary, RobotPlatform
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from robot import Robot
+import re
+import threading
 
 class RobotMonitor:
     def __init__(self, capture_interval=5, save_dir="pictures/webcam", max_size=1568, platform=RobotPlatform.ZEROTH):
@@ -28,6 +30,8 @@ class RobotMonitor:
         self.skill_library = SkillLibrary()
         self.platform = platform
         self.robot: Optional[Robot] = None
+        self.walk_stop_event = None
+        self.walk_thread = None
         
         # Create save directory if it doesn't exist
         os.makedirs(self.save_dir, exist_ok=True)
@@ -74,14 +78,16 @@ class RobotMonitor:
 
 {self.skill_library.get_skill_descriptions()}
 
-For the task: "{task_description}"
+For the task of moving to another spot: "{task_description}"
 
 Break this down into a sequence of skills from the above list. Format your response as:
 1. [skill_name]: Brief justification
 2. [skill_name]: Brief justification
 ...
 
-Only use skills from the provided list. Be concise but clear in your justifications."""
+Only use skills from the provided list. Be concise but clear in your justifications.
+If there is nothing to do, just send the wave command
+"""
 
         # Get plan from Claude
         message = self.client.messages.create(
@@ -108,6 +114,57 @@ Only use skills from the provided list. Be concise but clear in your justificati
         
         return plan
 
+    def extract_skills_from_response(self, response: str) -> List[str]:
+        """
+        Extract skill names from Claude's response
+        Returns list of skill names in order
+        """
+        skills = []
+        # Look for numbered list items with [skill_name]
+        for line in response.split('\n'):
+            if re.match(r'^\d+\.\s*\[([^\]]+)\]', line):
+                skill_name = re.findall(r'\[([^\]]+)\]', line)[0]
+                if skill_name in self.skill_library.skills:
+                    skills.append(skill_name)
+        return skills
+
+    def run_skills(self, skills: List[str]) -> Dict[str, bool]:
+        """
+        Run a sequence of skills and return their success status
+        Returns dict mapping skill names to success boolean
+        """
+        results = {}
+        for skill_name in skills:
+            try:
+                print(f"\nExecuting skill: {skill_name}")
+                
+                if skill_name == "walk_forward":
+                    # Handle walking specially with threading
+                    self.walk_stop_event = threading.Event()
+                    self.walk_thread = threading.Thread(
+                        target=lambda: self.execute_skill(
+                            "walk_forward",
+                            stop_event=self.walk_stop_event
+                        )
+                    )
+                    self.walk_thread.start()
+                    # Let it walk for 5 seconds
+                    time.sleep(5)
+                    self.walk_stop_event.set()
+                    self.walk_thread.join(timeout=2)
+                    self.walk_stop_event = None
+                    self.walk_thread = None
+                else:
+                    # Execute other skills normally
+                    self.execute_skill(skill_name)
+                    
+                results[skill_name] = True
+                print(f"Successfully executed: {skill_name}")
+            except Exception as e:
+                print(f"Failed to execute {skill_name}: {e}")
+                results[skill_name] = False
+        return results
+
     def process_frame(self, image_data):
         """Send frame to Claude and get response"""
         message = self.client.messages.create(
@@ -126,7 +183,7 @@ Only use skills from the provided list. Be concise but clear in your justificati
                             },
                         },
                         {
-                            "type": "text",
+                            "type": "text", 
                             "text": f"""Given an external view of a robot. What task needs to be done?
                             After describing the scene, break down the needed task into specific steps using available skills:
                             
@@ -148,13 +205,18 @@ Only use skills from the provided list. Be concise but clear in your justificati
         
         response = message.content
         
-        # If task identified, create plan
+        # Extract and execute skills if task identified
         if "Required task:" in response:
-            task = response.split("Required task:")[1].split("\n")[0].strip()
-            plan = self.plan_task(task)
-            response += f"\n\nComputed plan probabilities:\n"
-            for skill, prob in plan:
-                response += f"- {skill}: {prob:.2%} success probability\n"
+            skills = self.extract_skills_from_response(response)
+            if skills:
+                print("\nExecuting planned skills:")
+                results = self.run_skills(skills)
+                
+                # Add execution results to response
+                response += "\n\nExecution results:"
+                for skill, success in results.items():
+                    status = "✓ Success" if success else "✗ Failed"
+                    response += f"\n- {skill}: {status}"
             
         return response
 
@@ -185,13 +247,19 @@ Only use skills from the provided list. Be concise but clear in your justificati
                 print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
                 
                 response = self.process_frame(image_data)
-                print(f"Claude's analysis:\n{response}")
+                print(f"Claude's analysis and execution results:\n{response}")
                 
                 time.sleep(self.capture_interval)
                 
         except KeyboardInterrupt:
             print("\nMonitoring stopped by user")
         finally:
+            # Stop any ongoing walking
+            if self.walk_stop_event is not None:
+                self.walk_stop_event.set()
+                if self.walk_thread is not None:
+                    self.walk_thread.join(timeout=2)
+                    
             if self.cap is not None:
                 self.cap.release()
             if self.robot is not None:

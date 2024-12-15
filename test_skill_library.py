@@ -28,11 +28,11 @@ def test_skill_library():
         
         print("\n3. Testing 'wave' skill...")
         skill_lib.execute_skill("wave", RobotPlatform.ZEROTH, robot)
-        time.sleep(3)
+        time.sleep(1)
         
-        print("\n4. Testing 'recover_forward' skill...")
-        skill_lib.execute_skill("recover_forward", RobotPlatform.ZEROTH, robot)
-        time.sleep(3)
+        # print("\n4. Testing 'recover_forward' skill...")
+        # skill_lib.execute_skill("recover_forward", RobotPlatform.ZEROTH, robot)
+        # time.sleep(3)
         
         print("\n5. Testing 'walk_forward' skill (brief test)...")
         # Create a stop event for the walking test
@@ -49,8 +49,8 @@ def test_skill_library():
         )
         
         walk_thread.start()
-        print("Walking started... will stop in 3 seconds")
-        time.sleep(3)
+        print("Walking started... will stop in 5 seconds")
+        time.sleep(5)
         
         print("Stopping walk...")
         stop_event.set()
