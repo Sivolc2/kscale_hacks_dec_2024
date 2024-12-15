@@ -31,15 +31,18 @@ class RobotDigitalTwin:
         # Control mode flag -- sim to robot moves robot utilizing movement in mujoco viewer
         self.mode = mode  # "sim_to_robot" or "robot_to_sim" or "playback"
         self.recording = False
+        self.recording_type = None  # "continuous" or "keyframe"
         self.current_episode = []
         self.episodes_dir = Path("episodes")
+        self.keyframe_episodes_dir = Path("keyframe_episodes")
         self.episodes_dir.mkdir(exist_ok=True)
+        self.keyframe_episodes_dir.mkdir(exist_ok=True)
 
         print(f"Control mode: {self.mode}")
 
         if self.mode == "sim_to_robot":
             self.torque_enable = True
-            self.torque_value = 50
+            self.torque_value = 80
         else:
             self.torque_enable = False
             self.torque_value = 6
@@ -115,7 +118,8 @@ class RobotDigitalTwin:
             [(servo_id, self.torque_enable) for servo_id in servo_ids]
         )
         
-        # Set torque value for all mapped servos
+        # Set torque value for all mapped 6
+        # servos
         self.robot.servo.set_torque(
             [(servo_id, self.torque_value) for servo_id in servo_ids]
         )
@@ -196,20 +200,33 @@ class RobotDigitalTwin:
     def start_recording(self):
         """Start recording an episode"""
         episode_name = input("Enter episode name to record: ")
+        rec_type = input("Enter recording type (1 for continuous, 2 for keyframe): ")
+        
         self.recording = True
+        self.recording_type = "continuous" if rec_type == "1" else "keyframe"
         self.current_episode = []
-        print(f"Recording episode: {episode_name}")
+        
+        print(f"Recording episode: {episode_name} ({self.recording_type} mode)")
+        if self.recording_type == "keyframe":
+            print("Press Enter to save keyframes, R to stop recording")
+        
         return episode_name
 
     def stop_recording(self, episode_name):
         """Stop recording and save the episode"""
         self.recording = False
-        episode_path = self.episodes_dir / f"{episode_name}.txt"
+        
+        # Choose directory based on recording type
+        save_dir = self.keyframe_episodes_dir if self.recording_type == "keyframe" else self.episodes_dir
+        episode_path = save_dir / f"{episode_name}.txt"
+        
         with open(episode_path, "w") as f:
             for positions in self.current_episode:
                 position_str = ";".join([f"{id},{pos}" for id, pos in positions])
                 f.write(f"{position_str}\n")
+        
         print(f"Episode saved to {episode_path}")
+        self.recording_type = None
 
     def record_frame(self):
         """Record current joint positions"""
@@ -218,13 +235,15 @@ class RobotDigitalTwin:
                           if servo_id in self.servo_to_joint_mapping]
         self.current_episode.append(frame_positions)
 
-    def get_available_episodes(self):
+    def get_available_episodes(self, recording_type="continuous"):
         """Get list of recorded episodes"""
-        return [f.stem for f in self.episodes_dir.glob("*.txt")]
+        directory = self.keyframe_episodes_dir if recording_type == "keyframe" else self.episodes_dir
+        return [f.stem for f in directory.glob("*.txt")]
 
-    def load_episode(self, episode_name):
+    def load_episode(self, episode_name, recording_type="continuous"):
         """Load an episode from file"""
-        episode_path = self.episodes_dir / f"{episode_name}.txt"
+        directory = self.keyframe_episodes_dir if recording_type == "keyframe" else self.episodes_dir
+        episode_path = directory / f"{episode_name}.txt"
         frames = []
         with open(episode_path, "r") as f:
             for line in f:
@@ -249,44 +268,57 @@ class RobotDigitalTwin:
 
     def set_mode(self, mode):
         """Set the control mode and adjust torques accordingly"""
-        if mode not in ["sim_to_robot", "robot_to_sim", "playback"]:
-            raise ValueError("Invalid mode. Use 'sim_to_robot', 'robot_to_sim', or 'playback'")
+        if mode not in ["sim_to_robot", "robot_to_sim", "robot_to_sim_upper_free", "robot_to_sim_all_free", "playback"]:
+            raise ValueError("Invalid mode. Choose from available modes.")
         
-        # Reinitialize with appropriate model if changing to/from sim_to_robot mode
+        # Handle model switching for sim_to_robot mode
         if mode == "sim_to_robot" and self.mode != "sim_to_robot":
-            # Close existing viewer
             self.viewer.close()
-            time.sleep(0.5)  # Wait for viewer to fully close
-            
-            # Load new model
+            time.sleep(0.5)
             self.model = mujoco.MjModel.from_xml_path("robot_upper.xml")
             self.data = mujoco.MjData(self.model)
-            
-            # Create new viewer
             self.viewer = viewer.launch_passive(model=self.model, data=self.data)
-        
         elif mode != "sim_to_robot" and self.mode == "sim_to_robot":
-            # Close existing viewer
             self.viewer.close()
-            time.sleep(0.5)  # Wait for viewer to fully close
-            
-            # Load new model
+            time.sleep(0.5)
             self.model = mujoco.MjModel.from_xml_path("robot.xml")
             self.data = mujoco.MjData(self.model)
-            
-            # Create new viewer
             self.viewer = viewer.launch_passive(model=self.model, data=self.data)
         
         self.mode = mode
         print(f"Switched to {mode} mode")
         
+        # Define upper body servo IDs
+        upper_body_servos = {11, 12, 13, 14, 15, 16}  # arm servo IDs
+        
+        # Set torques based on mode
         if mode == "sim_to_robot":
-            self.torque_value = 50
+            self.torque_value = 80
+            torque_settings = [(servo_id, self.torque_value) for servo_id in self.servo_to_joint_mapping.keys()]
             print("Sim-to-robot mode: Only upper body (arms) will follow simulation movements")
         elif mode == "robot_to_sim":
             self.torque_value = 6
+            torque_settings = [(servo_id, self.torque_value) for servo_id in self.servo_to_joint_mapping.keys()]
+        elif mode == "robot_to_sim_upper_free":
+            # Set upper body torques to 0 and lower body to 6
+            torque_settings = []
+            for servo_id in self.servo_to_joint_mapping.keys():
+                if servo_id in upper_body_servos:
+                    torque_settings.append((servo_id, 0))
+                else:
+                    torque_settings.append((servo_id, 6))
+            print("Robot-to-sim mode: Upper body free for teleoperation, lower body stabilized")
+        elif mode == "robot_to_sim_all_free":
+            # Set all torques to 0 for full teleoperation
+            torque_settings = [(servo_id, 0) for servo_id in self.servo_to_joint_mapping.keys()]
+            print("Robot-to-sim mode: All joints free for teleoperation")
         elif mode == "playback":
-            self.torque_value = 50
+            # Set high torques for playback
+            self.torque_value = 10
+            torque_settings = [(servo_id, self.torque_value) for servo_id in self.servo_to_joint_mapping.keys()]
+            self.robot.servo.set_torque(torque_settings)
+            self.robot.servo.enable_movement()
+            
             episodes = self.get_available_episodes()
             if not episodes:
                 print("No episodes available")
@@ -306,19 +338,40 @@ class RobotDigitalTwin:
                 print("Invalid selection")
                 return
         
-        self.robot.servo.set_torque(
-            [(servo_id, self.torque_value) for servo_id in self.servo_to_joint_mapping.keys()]
-        )
+        self.robot.servo.set_torque(torque_settings)
         self.robot.servo.enable_movement()
+
+    def set_zero_position(self):
+        """Move all servos to zero position"""
+
+        # set torques to 50 to zero
+        self.robot.servo.set_torque([(servo_id, 50) for servo_id in self.servo_to_joint_mapping.keys()])
+
+        zero_positions = []
+        for servo_id in self.servo_to_joint_mapping.keys():
+            zero_positions.append((servo_id, 0.0 + self.joint_offsets[self.model.joint(self.servo_to_joint_mapping[servo_id]).name]))
+        
+        print("Moving to zero position...")
+        self.robot.servo.set_positions(zero_positions)
+        
+        # Also set simulation joints to zero
+        for joint_id in range(self.model.nq):
+            self.data.qpos[joint_id] = 0.0
+        
+        time.sleep(1)  # Give time for robot to reach position
 
     def run_digital_twin(self):
         """Main loop for running the digital twin"""
         try:
             print("Starting digital twin...")
             print("Press 1 for sim-to-robot mode")
-            print("Press 2 for robot-to-sim mode")
-            print("Press 3 for playback mode")
-            print("Press R to start/stop recording (in robot-to-sim mode)")
+            print("Press 2 for robot-to-sim mode (high torques)")
+            print("Press 3 for robot-to-sim mode (upper body free)")
+            print("Press 4 for robot-to-sim mode (all joints free)")
+            print("Press 5 for playback mode")
+            print("Press 6 to reset to zero position")
+            print("Press R to start/stop recording (in robot-to-sim modes)")
+            print("Press Enter during keyframe recording to save a keyframe")
             print("Press Ctrl+C to exit")
             
             episode_name = None
@@ -332,29 +385,77 @@ class RobotDigitalTwin:
                     elif command == '2':
                         self.set_mode("robot_to_sim")
                     elif command == '3':
-                        self.set_mode("playback")
-                        frame_index = 0
-                    elif command == 'r' and self.mode == "robot_to_sim":
+                        self.set_mode("robot_to_sim_upper_free")
+                    elif command == '4':
+                        self.set_mode("robot_to_sim_all_free")
+                    elif command == '5':
+                        # Modified playback mode selection
+                        print("\nSelect playback type:")
+                        print("1. Continuous recording")
+                        print("2. Keyframe recording")
+                        playback_type = input("Enter choice (1/2): ")
+                        
+                        recording_type = "continuous" if playback_type == "1" else "keyframe"
+                        episodes = self.get_available_episodes(recording_type)
+                        
+                        if not episodes:
+                            print(f"No {recording_type} episodes available")
+                            continue
+                        
+                        print("\nAvailable episodes:")
+                        for i, episode in enumerate(episodes):
+                            print(f"{i+1}. {episode}")
+                        
+                        choice = input("Select episode number to play: ")
+                        try:
+                            episode_name = episodes[int(choice)-1]
+                            self.current_episode = self.load_episode(episode_name, recording_type)
+                            print(f"Loaded episode: {episode_name}")
+                            
+                            # Set torques once at the start of playback
+                            self.robot.servo.set_torque([(servo_id, 10) for servo_id in self.servo_to_joint_mapping.keys()])
+                            self.robot.servo.set_positions([(13, 15), (14, 15)])
+                            
+                            self.mode = "playback"
+                            self.recording_type = recording_type
+                            frame_index = 0
+                            self.move_to_default_position()
+                        except (ValueError, IndexError):
+                            print("Invalid selection")
+                            continue
+                    elif command == '6':
+                        self.set_zero_position()
+                    elif command == 'r' and self.mode in ["robot_to_sim", "robot_to_sim_upper_free", "robot_to_sim_all_free"]:
                         if not self.recording:
                             episode_name = self.start_recording()
                         else:
                             self.stop_recording(episode_name)
+                    elif self.recording and self.recording_type == "keyframe":
+                        # Save keyframe when Enter is pressed during keyframe recording
+                        positions = self.robot.servo.get_positions()
+                        frame_positions = [(servo_id, pos) for servo_id, pos, _ in positions 
+                                        if servo_id in self.servo_to_joint_mapping]
+                        self.current_episode.append(frame_positions)
+                        print("Keyframe saved!")
                     elif command == 'q':
                         break
                 
                 if self.mode == "sim_to_robot":
                     mujoco.mj_step(self.model, self.data)
                     self.sync_sim_to_robot()
-                elif self.mode == "robot_to_sim":
+                elif self.mode in ["robot_to_sim", "robot_to_sim_upper_free", "robot_to_sim_all_free"]:
                     self.sync_robot_to_sim()
                     mujoco.mj_step(self.model, self.data)
-                    if self.recording:
+                    if self.recording and self.recording_type == "continuous":
                         self.record_frame()
                 elif self.mode == "playback":
                     if frame_index < len(self.current_episode):
                         positions = self.current_episode[frame_index]
                         self.robot.servo.set_positions(positions)
                         frame_index += 1
+                        # Add delay between keyframes for smoother movement
+                        if self.recording_type == "keyframe":
+                            time.sleep(2.0)  # Adjust this value as needed
                     else:
                         print("Episode playback complete")
                         self.mode = "robot_to_sim"
