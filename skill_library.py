@@ -112,6 +112,25 @@ class SkillLibrary:
         ))
 
         self.add_skill(Skill(
+            name="walk_backward",
+            description="Make the robot walk backward",
+            platform_commands={
+                RobotPlatform.GENERIC: RobotCommand(
+                    platform=RobotPlatform.GENERIC,
+                    command_fn=lambda robot: None  # Generic placeholder
+                ),
+                RobotPlatform.ZEROTH: RobotCommand(
+                    platform=RobotPlatform.ZEROTH,
+                    command_fn=lambda robot, stop_event: self._zeroth_walk(
+                        robot, 
+                        stop_event, 
+                        cmd_vx=-0.4  # Negative velocity for backward walking
+                    )
+                )
+            }
+        ))
+
+        self.add_skill(Skill(
             name="wave",
             description="Make the robot wave its arm",
             platform_commands={
@@ -176,9 +195,9 @@ class SkillLibrary:
             }
         ))
 
-    def _zeroth_walk(self, robot: Robot, stop_event: threading.Event):
+    def _zeroth_walk(self, robot: Robot, stop_event: threading.Event, cmd_vx=0.4):
         """Implementation of walking for Zeroth robot using ONNX model"""
-        print("Walking")
+        print(f"Walking with velocity: {cmd_vx}")
         print("Restoring original offsets")
         
         if self.model_controller is None:
@@ -210,11 +229,11 @@ class SkillLibrary:
             
         try:
             # Run model inference for walking
-            print("Starting model-based walking...")
+            print(f"Starting model-based walking with velocity {cmd_vx}...")
             self.model_controller.run_inference(
                 robot=robot,
                 stop_event=stop_event,
-                cmd_vx=0.4,  # Forward velocity
+                cmd_vx=cmd_vx,  # Use passed velocity
                 cmd_vy=0.0,  # Lateral velocity 
                 cmd_dyaw=0.0  # Yaw rate
             )

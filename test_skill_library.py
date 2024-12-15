@@ -55,6 +55,28 @@ def test_skill_library():
         print("Stopping walk...")
         stop_event.set()
         walk_thread.join(timeout=2)
+
+        print("\n5. Testing 'walk_backward' skill (brief test)...")
+        # Create a stop event for the walking test
+        stop_event = threading.Event()
+        
+        # Start walking in a separate thread so we can stop it
+        walk_thread = threading.Thread(
+            target=lambda: skill_lib.execute_skill(
+                "walk_backward", 
+                RobotPlatform.ZEROTH,
+                robot,
+                stop_event=stop_event
+            )
+        )
+        
+        walk_thread.start()
+        print("Walking started... will stop in 5 seconds")
+        time.sleep(5)
+        
+        print("Stopping walk...")
+        stop_event.set()
+        walk_thread.join(timeout=2)
         
         print("\nFinal position reset...")
         skill_lib.execute_skill("reset_positions", RobotPlatform.ZEROTH, robot)
