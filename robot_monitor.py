@@ -9,6 +9,7 @@ from typing import List, Tuple, Optional, Dict
 from robot import Robot
 import threading
 from model_handler import ModelHandler
+from voice_processor import Command, CommandState
 
 class RobotMonitor:
     def __init__(self, 
@@ -142,28 +143,73 @@ class RobotMonitor:
             raise RuntimeError("Robot not initialized. Call initialize_robot() first.")
         return self.skill_library.execute_skill(skill_name, self.platform, self.robot, **kwargs)
 
-    def get_voice_command(self) -> Optional[str]:
+    def get_voice_command(self) -> Optional[Command]:
         """Get transcribed voice command from the voice processor"""
         if not self.voice_mode or not self.voice_processor:
             return None
         
         try:
-            # Get command if available
-            command = self.voice_processor.get_command()
+            # Get next command if available
+            command = self.voice_processor.get_next_command()
             if command:
-                print(f"Voice command received: {command}")
+                print(f"\nVoice command received: {command.text}")
                 
-                # Get recent context
-                context = self.voice_processor.get_recent_context()
-                if len(context) > 1:
+                # Show recent context
+                if command.context:
                     print("Recent conversation context:")
-                    for text in context[-3:]:  # Show last 3 entries
+                    for text in command.context[-3:]:
                         print(f"  - {text}")
                     
                 return command
         except Exception as e:
             print(f"Error processing voice command: {e}")
         return None
+
+    def process_voice_command(self, command: Command) -> None:
+        """
+        Process and execute a voice command
+        Args:
+            command: Command object to process
+        """
+        try:
+            # Get model's analysis of the command
+            response = self.model_handler.plan_task(command.text, self.skill_library.get_skill_descriptions())
+            
+            # Extract skills from response
+            skills = self.model_handler.extract_skills(response, self.skill_library.skills)
+            
+            if skills:
+                print("\nExecuting planned skills:")
+                results = self.run_skills(skills)
+                
+                # Update command state based on results
+                if all(results.values()):
+                    self.voice_processor.update_command_state(
+                        command,
+                        CommandState.COMPLETED,
+                        f"Successfully executed: {', '.join(skills)}"
+                    )
+                else:
+                    failed_skills = [skill for skill, success in results.items() if not success]
+                    self.voice_processor.update_command_state(
+                        command,
+                        CommandState.FAILED,
+                        f"Failed to execute: {', '.join(failed_skills)}"
+                    )
+            else:
+                self.voice_processor.update_command_state(
+                    command,
+                    CommandState.FAILED,
+                    "No valid skills found in command"
+                )
+                
+        except Exception as e:
+            print(f"Error processing voice command: {e}")
+            self.voice_processor.update_command_state(
+                command,
+                CommandState.FAILED,
+                f"Error: {str(e)}"
+            )
 
     def run_monitoring(self):
         """Main monitoring loop"""
@@ -180,19 +226,40 @@ class RobotMonitor:
             # Start voice processing if enabled
             if self.voice_mode and self.voice_processor:
                 self.voice_processor.start_listening()
+                print("Listening for voice commands starting with 'zero' or 'hey zero'...")
             
             while True:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"\n[{timestamp}] Capturing frame...")
                 
-                voice_command = self.get_voice_command() if self.voice_mode else None
-                image_data, save_path, (width, height, mp) = self.capture_frame()
-                
-                print(f"Saved image to: {save_path}")
-                print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
-                
-                response = self.process_frame_with_voice(image_data, voice_command)
-                print(f"Analysis and execution results:\n{response}")
+                if self.voice_mode:
+                    # In voice mode, only process when there's a command
+                    command = self.get_voice_command()
+                    if command:
+                        print(f"\n[{timestamp}] Voice command received, capturing frame...")
+                        
+                        # Capture and process frame
+                        image_data, save_path, (width, height, mp) = self.capture_frame()
+                        print(f"Saved image to: {save_path}")
+                        print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
+                        
+                        # Process voice command
+                        self.process_voice_command(command)
+                        
+                        # Show command queue status
+                        status = self.voice_processor.get_command_status()
+                        print("\nCommand Queue Status:")
+                        for state, count in status.items():
+                            if count > 0:
+                                print(f"  {state}: {count}")
+                else:
+                    # Regular mode - process frames continuously
+                    print(f"\n[{timestamp}] Capturing frame...")
+                    image_data, save_path, (width, height, mp) = self.capture_frame()
+                    print(f"Saved image to: {save_path}")
+                    print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
+                    
+                    response = self.process_frame_with_voice(image_data, None)
+                    print(f"Analysis and execution results:\n{response}")
                 
                 time.sleep(self.capture_interval)
                 
@@ -247,18 +314,36 @@ def parse_args():
     parser.add_argument('-v', '--voice-mode',
                        action='store_true',
                        help='Enable voice command mode')
+    parser.add_argument('--whisper-model',
+                       type=str,
+                       choices=['tiny', 'base', 'small', 'medium', 'large'],
+                       default='small',
+                       help='Whisper model to use for voice recognition (default: small)')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     
-    # Initialize and run monitor with specified parameters
+    # Initialize voice processor if voice mode enabled
+    voice_processor = None
+    if args.voice_mode:
+        try:
+            from voice_processor import WhisperVoiceProcessor
+            voice_processor = WhisperVoiceProcessor(model_name=args.whisper_model)
+            print(f"Initialized Whisper voice processor with {args.whisper_model} model")
+        except Exception as e:
+            print(f"Failed to initialize voice processor: {e}")
+            print("Running without voice mode")
+            args.voice_mode = False
+    
+    # Initialize and run monitor
     monitor = RobotMonitor(
         capture_interval=args.interval,
         save_dir=args.directory,
         max_size=args.max_size,
         platform=RobotPlatform[args.platform.upper()],
-        voice_mode=args.voice_mode
+        voice_mode=args.voice_mode,
+        voice_processor=voice_processor
     )
     
     try:
