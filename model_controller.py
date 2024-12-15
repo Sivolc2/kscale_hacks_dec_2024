@@ -106,9 +106,31 @@ class ModelController:
             positions_leg = current_positions_np[: self.cfg.num_actions]
             velocities_leg = current_velocities_np[: self.cfg.num_actions]
 
-            # Mock IMU data
-            omega = np.zeros(3, dtype=np.float32)
-            eu_ang = np.zeros(3, dtype=np.float32)
+            # Replace mock IMU data with real data
+            imu_data = robot.get_imu_data()
+            
+            # Convert gyro from deg/s to rad/s
+            omega = np.array([
+                imu_data['gyro']['x'],
+                imu_data['gyro']['y'],
+                imu_data['gyro']['z']
+            ], dtype=np.float32) * np.pi / 180.0
+
+            # Convert accelerometer from mg to g and use it for rough euler angles
+            # This is a simple approximation - you might want to use a proper filter like Madgwick
+            accel = np.array([
+                imu_data['accel']['x'],
+                imu_data['accel']['y'],
+                imu_data['accel']['z']
+            ], dtype=np.float32) / 1000.0  # mg to g
+            
+            # Simple euler angle estimation from accelerometer
+            # Roll and pitch can be estimated from gravity vector, yaw cannot
+            eu_ang = np.array([
+                np.arctan2(accel[1], accel[2]),  # roll
+                np.arctan2(-accel[0], np.sqrt(accel[1]**2 + accel[2]**2)),  # pitch
+                0.0  # yaw (cannot be determined from accelerometer alone)
+            ], dtype=np.float32)
 
             # Prepare observation
             obs = np.zeros([1, self.cfg.num_single_obs], dtype=np.float32)

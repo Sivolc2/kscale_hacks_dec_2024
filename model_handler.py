@@ -116,7 +116,7 @@ Based on the image, determine if:
 1. The objective has been achieved
 2. If not, should we try the skill again?
 
-RESPOND EXACTLY IN THIS FORMAT:
+YOU MUST RESPOND EXACTLY IN THIS FORMAT:
 Analysis: <brief description of what you see>
 Continue execution: <YES or NO>
 Additional invocations: <number between 1-3 if continuing, or 0 if complete>
@@ -163,32 +163,54 @@ Reason: Need one more attempt to achieve stable standing position
             reason_match = re.search(r'Reason:\s*(.+?)(?:\n|$)', response_text, re.DOTALL)
             analysis_match = re.search(r'Analysis:\s*(.+?)(?:\n|$)', response_text, re.DOTALL)
             
-            if not continue_match:
-                raise ValueError("Could not find 'Continue execution' in response")
-            if not reason_match:
-                raise ValueError("Could not find 'Reason' in response")
+            # Default values if parsing fails
+            continue_execution = True  # Default to continue
+            num_invocations = 1      # Default to 1 more try
+            reason = "Format error - defaulting to one more attempt"
+            analysis = "Could not parse analysis"
+            
+            # Override defaults with parsed values if available
+            if continue_match:
+                continue_execution = continue_match.group(1).upper() == "YES"
+            
+            if continue_execution and invocations_match:
+                num_invocations = min(int(invocations_match.group(1)), 3)
+            elif not continue_execution:
+                num_invocations = 0
                 
-            continue_execution = continue_match.group(1).upper() == "YES"
-            
-            # Default to 1 invocation if continuing but no number specified
-            num_invocations = int(invocations_match.group(1)) if continue_execution and invocations_match else (1 if continue_execution else 0)
-            
-            # Limit number of additional invocations
-            num_invocations = min(num_invocations, 3)
+            if reason_match:
+                reason = reason_match.group(1).strip()
+                
+            if analysis_match:
+                analysis = analysis_match.group(1).strip()
+                
+            # If this is not the first attempt, be more conservative
+            if previous_attempts >= 2:
+                continue_execution = False
+                num_invocations = 0
+                reason = f"Maximum attempts ({previous_attempts}) reached"
             
             return {
                 "continue_execution": continue_execution,
                 "num_invocations": num_invocations,
-                "reason": reason_match.group(1).strip(),
-                "analysis": analysis_match.group(1).strip() if analysis_match else "No analysis provided",
+                "reason": reason,
+                "analysis": analysis,
                 "full_response": response_text
             }
                 
         except Exception as e:
-            print(f"\nError parsing action agent response: {str(e)}")
+            print(f"\nError in action_agent: {str(e)}")
             if 'response_text' in locals():
                 print(f"Raw response: {response_text}")
-            raise ValueError(f"Could not parse action agent response: {str(e)}")
+                
+            # Default fallback response
+            return {
+                "continue_execution": previous_attempts < 2,  # Only continue if less than 2 attempts
+                "num_invocations": 1 if previous_attempts < 2 else 0,
+                "reason": f"Error parsing response: {str(e)} - defaulting to {'continue' if previous_attempts < 2 else 'stop'}",
+                "analysis": "Error parsing model response",
+                "full_response": response_text if 'response_text' in locals() else "No response"
+            }
 
     def action_agent_compare(self, 
                             skill_name: str,

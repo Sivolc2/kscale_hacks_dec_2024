@@ -5,7 +5,7 @@ Simplified Robot class with computations in degrees and direct position/velocity
 
 import subprocess
 import logging
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from openlch import HAL
 import math
 import numpy as np
@@ -66,6 +66,7 @@ class Robot:
             Joint(**joint_config) for joint_config in self.config.joint_configs
         ]
         self.joint_dict: Dict[str, Joint] = {joint.name: joint for joint in self.joints}
+        self.imu = self.hal.imu
 
     def initialize(self) -> None:
         """Initializes the robot's hardware and joints."""
@@ -186,3 +187,29 @@ class Robot:
                 return frame
         return None
 
+    def get_imu_data(self) -> Dict[str, Any]:
+        """Get current IMU data.
+        
+        Returns:
+            Dictionary containing gyroscope and accelerometer data
+        """
+        return self.imu.get_data()
+
+    def get_imu_orientation(self) -> Tuple[float, float, float]:
+        """Get current IMU orientation (roll, pitch, yaw).
+        
+        Returns:
+            Tuple of (roll, pitch, yaw) in degrees
+        """
+        data = self.get_imu_data()
+        accel = data['accel']
+        
+        # Simple euler angle estimation from accelerometer
+        # Note: This is a basic implementation - consider using Madgwick filter
+        # for more accurate results
+        roll = math.atan2(accel['y'], accel['z']) * 180.0 / math.pi
+        pitch = math.atan2(-accel['x'], 
+                          math.sqrt(accel['y']**2 + accel['z']**2)) * 180.0 / math.pi
+        yaw = 0.0  # Can't determine yaw from accelerometer alone
+        
+        return roll, pitch, yaw
