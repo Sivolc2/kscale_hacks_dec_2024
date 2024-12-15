@@ -182,18 +182,18 @@ def parse_args():
                        type=float,
                        default=5.0,
                        help='Duration of walking test in seconds (default: 5.0)')
-    parser.add_argument('--walk-multipliers',
+    parser.add_argument('--torque-values',
                        type=str,
-                       default="1.0,0.8,0.6",
-                       help='Comma-separated list of walking torque multipliers to test (default: 1.0,0.8,0.6)')
+                       default="40.0,32.0,24.0",
+                       help='Comma-separated list of specific torque values to test (default: 40.0,32.0,24.0)')
     return parser.parse_args()
 
-def test_walking(duration: float = None, walk_multipliers: str = None):
-    """Test walking functionality with different walking torque multipliers
+def test_walking(duration: float = None, torque_values: str = None):
+    """Test walking functionality with different specific torque values
     
     Args:
         duration: Optional override for test duration in seconds
-        walk_multipliers: Optional override for multipliers as comma-separated string
+        torque_values: Optional override for torque values as comma-separated string
     """
     print("\n=== Starting Walking Tests ===")
     
@@ -204,16 +204,16 @@ def test_walking(duration: float = None, walk_multipliers: str = None):
     # Get test parameters with CLI overrides
     test_params = params.get('testing', {}).get('walking', {})
     test_duration = duration or test_params.get('duration', 5.0)
-    yaml_multipliers = test_params.get('multipliers', [1.0, 0.8, 0.6])
+    yaml_torques = test_params.get('torque_values', [40.0, 32.0, 24.0])
     pause_time = test_params.get('pause_between', 3.0)
     
-    # Use CLI multipliers if provided, otherwise use yaml values
-    multipliers = [float(m) for m in walk_multipliers.split(',')] if walk_multipliers else yaml_multipliers
+    # Use CLI torque values if provided, otherwise use yaml values
+    torques = [float(t) for t in torque_values.split(',')] if torque_values else yaml_torques
     
     print(f"\nTest parameters:")
     print(f"Duration per test: {test_duration} seconds")
     print(f"Pause between tests: {pause_time} seconds")
-    print(f"Testing multipliers: {multipliers}")
+    print(f"Testing torque values: {torques}")
     
     skill_lib = SkillLibrary()
     robot = Robot()
@@ -222,12 +222,12 @@ def test_walking(duration: float = None, walk_multipliers: str = None):
         print("\nInitializing robot...")
         robot.initialize()
         
-        # Test each multiplier
-        for mult in multipliers:
-            print(f"\n--- Testing walking torque multiplier: {mult:.2f} ---")
+        # Test each torque value
+        for torque in torques:
+            print(f"\n--- Testing walking torque: {torque:.1f} ---")
             
-            # Update param.yaml with new multiplier
-            params['robot']['servos']['walking_torque_multiplier'] = mult
+            # Update param.yaml with new torque value
+            params['robot']['servos']['walking_torque'] = torque
             
             with open("param.yaml", 'w') as f:
                 yaml.safe_dump(params, f)
@@ -248,7 +248,7 @@ def test_walking(duration: float = None, walk_multipliers: str = None):
             )
             
             walk_thread.start()
-            print("Walking started...")
+            print(f"Walking started with torque = {torque:.1f}")
             time.sleep(test_duration)
             print("Stopping walk...")
             stop_event.set()
@@ -278,7 +278,7 @@ if __name__ == "__main__":
     
     try:
         if args.walk_only:
-            test_walking(duration=args.walk_duration, walk_multipliers=args.walk_multipliers)
+            test_walking(duration=args.walk_duration, torque_values=args.torque_values)
         else:
             # Run main functionality tests
             test_skill_library(dummy_mode=args.dummy)

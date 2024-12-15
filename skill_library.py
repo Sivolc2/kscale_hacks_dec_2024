@@ -282,23 +282,14 @@ class SkillLibrary:
         with open(self.config_path, 'r') as f:
             params = yaml.safe_load(f)
         
-        # Get base torque settings
-        torque_scale = params['robot']['servos'].get('torque_scale', 1.0)
-        base_torque = params['robot']['servos'].get('default_torque', 20.0)
-        
-        # Optional walking torque multiplier (defaults to 1.0 if not specified)
-        walking_multiplier = params['robot']['servos'].get('walking_torque_multiplier', 1.0)
-        
-        # Calculate final torque as: base_torque * base_scale * walking_multiplier
-        final_torque = base_torque * torque_scale * walking_multiplier
-        
-        print(f"Setting walking torque to {final_torque:.1f} "
-              f"({torque_scale*100:.0f}% base scale × {walking_multiplier:.1f} walking multiplier)")
+        # Get walking torque value
+        walking_torque = params['robot']['servos'].get('walking_torque', 32.0)
+        print(f"Setting walking torque to {walking_torque:.1f}")
         
         # Set walking torque
         servo_ids = [joint.servo_id for joint in robot.joints]
         robot.hal.servo.set_torque(
-            [(servo_id, final_torque) for servo_id in servo_ids]
+            [(servo_id, walking_torque) for servo_id in servo_ids]
         )
         
         # Restore walking offsets like in run.py
