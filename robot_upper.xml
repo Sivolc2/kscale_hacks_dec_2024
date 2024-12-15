@@ -1,0 +1,71 @@
+<mujoco model="opus_upper_body">
+  <compiler angle="radian" meshdir="meshes" eulerseq="zyx" autolimits="true" />
+
+  <option gravity="0 0 0" timestep="0.002">
+    <flag gravity="disable"/>
+  </option>
+
+  <default>
+    <joint damping="0.1" armature="0.01" />
+    <motor ctrlrange="-1 1" ctrllimited="true" />
+  </default>
+
+  <!-- <contact>
+    <exclude body1="shoulder_yaw_right" body2="right_shoulder_yaw_motor"/>
+    <exclude body1="shoulder_yaw_left" body2="left_shoulder_yaw_motor"/>
+  </contact> -->
+
+  <asset>
+    <mesh name="Torso" file="Torso.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="shoulder_yaw_right" file="shoulder_yaw_right.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="shoulder_yaw_left" file="shoulder_yaw_left.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="right_shoulder_yaw_motor" file="right_shoulder_yaw_motor.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="left_shoulder_yaw_motor" file="left_shoulder_yaw_motor.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="Left_Hand" file="Left_Hand.stl" scale="1.5 1.5 1.5"/>
+    <mesh name="hand_right" file="hand_right.stl" scale="1.5 1.5 1.5"/>
+  </asset>
+
+  <worldbody>
+    <geom type="mesh" rgba="0.972549 0.529412 0.00392157 1" mesh="Torso"/>
+    <body name="shoulder_yaw_right" pos="-0.117205 -0.000503334 0.06458" quat="0.5 0.5 0.5 0.5">
+      <inertial pos="-0.00037601 -0.00365665 -0.0174329" quat="0.647359 0.284476 0.647359 0.284476" mass="0.0403627" diaginertia="2.39887e-05 2.03034e-05 1.02268e-05" />
+      <joint name="right_shoulder_pitch" pos="0 0 0" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-30 30" />
+      <geom type="mesh" rgba="0.972549 0.529412 0.00392157 1" mesh="shoulder_yaw_right"/>
+      <body name="right_shoulder_yaw_motor" pos="-0.028238 -0.024449 -0.045" quat="-1.64085e-08 0.707107 1.64085e-08 0.707107">
+        <inertial pos="-0.0149548 0.0320706 0.0181015" quat="0.688803 0.691851 0.153461 0.152782" mass="0.17146" diaginertia="0.000152631 0.000138758 4.07147e-05" />
+        <joint name="right_shoulder_yaw" pos="0 0 0" axis="0 0 -1" range="-1.5708 1.5708" actuatorfrcrange="-30 30" />
+        <geom type="mesh" rgba="0.4 0.4 0.4 1" mesh="right_shoulder_yaw_motor"/>
+        <body name="Left_Hand" pos="-0.045005 0.096513 0.000375" quat="0.976296 4.53101e-08 0 0.21644">
+          <inertial pos="0.0011185 0.0461324 0.0182544" quat="0.706815 0.706815 -0.0202995 -0.0202995" mass="0.0751849" diaginertia="5.67243e-05 4.71032e-05 1.47264e-05" />
+          <joint name="right_elbow_yaw" pos="0 0 0" axis="0 0 1" range="-1.22173 1.22173" actuatorfrcrange="-30 30" />
+          <geom type="mesh" rgba="0.972549 0.529412 0.00392157 1" mesh="Left_Hand"/>
+        </body>
+      </body>
+    </body>
+    <body name="shoulder_yaw_left" pos="0.117245 -0.000503334 0.06458" quat="0.5 -0.5 -0.5 0.5">
+      <inertial pos="-0.000375909 0.00365652 -0.0174327" quat="0.284475 0.647359 0.284475 0.647359" mass="0.0403631" diaginertia="2.39889e-05 2.03034e-05 1.0227e-05" />
+      <joint name="left_shoulder_pitch" pos="0 0 0" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-30 30" />
+      <geom type="mesh" rgba="0.972549 0.529412 0.00392157 1" mesh="shoulder_yaw_left"/>
+      <body name="left_shoulder_yaw_motor" pos="-0.028238 0.024449 -0.045" quat="-1.64085e-08 0.707107 -1.64085e-08 -0.707107">
+        <inertial pos="0.0149548 -0.0320706 -0.0181015" quat="0.689017 0.692092 0.152399 0.151787" mass="0.17146" diaginertia="0.000152247 0.000138758 4.10983e-05" />
+        <joint name="left_shoulder_yaw" pos="0 0 0" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-30 30" />
+        <geom type="mesh" rgba="0.4 0.4 0.4 1" mesh="left_shoulder_yaw_motor"/>
+        <body name="hand_right" pos="0.045005 -0.096513 -0.000375" quat="2.26551e-08 -0.976296 -0.21644 5.0225e-09">
+          <inertial pos="-0.00111857 0.0461326 0.0182546" quat="0.706815 0.706815 0.0202982 0.0202982" mass="0.0751837" diaginertia="5.67234e-05 4.71029e-05 1.47257e-05" />
+          <joint name="left_elbow_yaw" pos="0 0 0" axis="0 0 1" range="-1.22173 1.22173" actuatorfrcrange="-30 30" />
+          <geom type="mesh" rgba="0.972549 0.529412 0.00392157 1" mesh="hand_right"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+      <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+      <position name="right_shoulder_yaw" joint="right_shoulder_yaw" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+      <position name="right_elbow_yaw" joint="right_elbow_yaw" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+      <position name="left_shoulder_pitch" joint="left_shoulder_pitch" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+      <position name="left_shoulder_yaw" joint="left_shoulder_yaw" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+      <position name="left_elbow_yaw" joint="left_elbow_yaw" kp="300" kv="100" gear="1" ctrllimited="true" ctrlrange="-20 20" />
+  </actuator>
+
+</mujoco>
