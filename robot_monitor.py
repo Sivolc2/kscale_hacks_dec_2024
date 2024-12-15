@@ -5,6 +5,7 @@ import os
 import argparse
 import yaml
 from pathlib import Path
+from colorama import init, Fore, Back, Style
 from image_processor import ImageProcessor
 from skill_library import SkillLibrary, RobotPlatform
 from typing import List, Tuple, Optional, Dict
@@ -12,6 +13,37 @@ from robot import Robot
 import threading
 from model_handler import ModelHandler
 from voice_processor import Command, CommandState, WhisperVoiceProcessor
+
+# Initialize colorama
+init(autoreset=True)
+
+def print_status(msg: str):
+    """Print status message in cyan"""
+    print(f"{Fore.CYAN}{msg}{Style.RESET_ALL}")
+
+def print_success(msg: str):
+    """Print success message in green"""
+    print(f"{Fore.GREEN}✓ {msg}{Style.RESET_ALL}")
+
+def print_error(msg: str):
+    """Print error message in red"""
+    print(f"{Fore.RED}✗ {msg}{Style.RESET_ALL}")
+
+def print_warning(msg: str):
+    """Print warning message in yellow"""
+    print(f"{Fore.YELLOW}⚠ {msg}{Style.RESET_ALL}")
+
+def print_thinking(msg: str):
+    """Print AI thinking message in magenta"""
+    print(f"{Fore.MAGENTA}🤔 {msg}{Style.RESET_ALL}")
+
+def print_action(msg: str):
+    """Print robot action message in blue"""
+    print(f"{Fore.BLUE}🤖 {msg}{Style.RESET_ALL}")
+
+def print_header(msg: str):
+    """Print section header in white on blue"""
+    print(f"\n{Back.BLUE}{Fore.WHITE} {msg} {Style.RESET_ALL}")
 
 def load_config(config_path: str = "config/config.yaml") -> Dict:
     """Load configuration from yaml file"""
@@ -35,12 +67,7 @@ def load_config(config_path: str = "config/config.yaml") -> Dict:
 
 class RobotMonitor:
     def __init__(self, config_path: str = "config/config.yaml", **kwargs):
-        """Initialize the robot monitoring system
-        
-        Args:
-            config_path: Path to configuration file
-            **kwargs: Optional overrides for config values
-        """
+        """Initialize the robot monitoring system"""
         # Load base configuration
         self.config = load_config(config_path)
         
@@ -51,6 +78,7 @@ class RobotMonitor:
                 monitor_config[key] = value
         
         # Initialize components
+        print_status("Initializing components...")
         self.model_handler = ModelHandler()
         self.capture_interval = monitor_config["capture_interval"]
         self.save_dir = monitor_config["save_dir"]
@@ -71,13 +99,14 @@ class RobotMonitor:
                 self.voice_processor = WhisperVoiceProcessor(
                     model_name=monitor_config["whisper_model"]
                 )
-                print(f"Initialized Whisper voice processor with {monitor_config['whisper_model']} model")
+                print_success(f"Initialized Whisper voice processor with {monitor_config['whisper_model']} model")
             except Exception as e:
-                print(f"Failed to initialize voice processor: {e}")
+                print_error(f"Failed to initialize voice processor: {e}")
                 self.voice_mode = False
         
         # Create save directory if it doesn't exist
         os.makedirs(self.save_dir, exist_ok=True)
+        print_success("Monitor initialization complete")
 
     def initialize_robot(self) -> None:
         """Initialize the robot hardware"""
@@ -120,60 +149,54 @@ class RobotMonitor:
     def process_frame_with_voice(self, image_data: str, voice_command: Optional[str] = None) -> str:
         """Process frame with optional voice command input"""
         try:
-            # Get sequence of skills and objectives from planning agent
+            print_thinking("Planning task sequence...")
             task_pairs = self.model_handler.plan_tasks(
                 self.skill_library.get_skill_descriptions(),
                 image_data, 
                 voice_command
             )
             
-            print("\nPlanned task sequence:")
+            print_header("Planned Task Sequence")
             for skill_name, objective in task_pairs:
-                print(f"- [{skill_name}]: {objective}")
+                print_status(f"- [{skill_name}]: {objective}")
             
             # Execute each skill in sequence
             for skill_name, objective in task_pairs:
+                print_header(f"Executing {skill_name}")
+                print_status(f"Objective: {objective}")
+                
                 attempts = 0
                 while True:
-                    print(f"\nExecuting {skill_name} (attempt {attempts + 1})")
-                    print(f"Objective: {objective}")
+                    attempts += 1
+                    print_action(f"Attempt {attempts}")
                     
                     success = self.execute_skill(skill_name)
-                    attempts += 1
-                    
                     if not success:
+                        print_error(f"Failed to execute skill: {skill_name}")
                         return f"Failed to execute skill: {skill_name}"
                     
-                    # Capture new image after execution
-                    new_image_data, _, _ = self.capture_frame()
-                    
                     # Get action agent's decision
+                    print_thinking("Evaluating execution...")
                     decision = self.model_handler.action_agent(
                         skill_name,
                         objective,
-                        new_image_data,
+                        image_data,
                         attempts
                     )
                     
-                    print(f"\nAction agent decision:")
-                    print(f"Continue: {'Yes' if decision['continue_execution'] else 'No'}")
-                    print(f"Reason: {decision['reason']}")
+                    print_header("Action Agent Decision")
+                    print_status(f"Analysis: {decision['analysis']}")
+                    print_status(f"Continue: {'Yes' if decision['continue_execution'] else 'No'}")
+                    print_status(f"Reason: {decision['reason']}")
                     
                     if not decision["continue_execution"]:
+                        print_success(f"Successfully completed {skill_name}")
                         break
-                        
-                    # Execute additional invocations if requested
-                    for _ in range(decision["num_invocations"]):
-                        print(f"\nExecuting additional {skill_name}")
-                        success = self.execute_skill(skill_name)
-                        attempts += 1
-                        if not success:
-                            return f"Failed during additional execution of {skill_name}"
             
-            return f"Completed all planned tasks successfully"
+            return "Completed all planned tasks successfully"
                 
         except Exception as e:
-            print(f"Error during execution: {e}")
+            print_error(f"Error during execution: {e}")
             return f"Error: {str(e)}"
 
     def run_skills(self, skills: List[str]) -> Dict[str, bool]:
@@ -316,61 +339,44 @@ class RobotMonitor:
     def run_monitoring(self):
         """Main monitoring loop"""
         try:
+            print_header("Starting Robot Monitor")
             self.initialize_robot()
             self.initialize_camera()
             
-            print(f"Starting robot monitoring...")
-            print(f"Saving images to: {self.save_dir}")
-            print(f"Capture interval: {self.capture_interval} seconds")
-            print(f"Max image dimension: {self.processor.max_size}px")
-            print(f"Voice mode: {'enabled' if self.voice_mode else 'disabled'}")
+            print_status(f"Saving images to: {self.save_dir}")
+            print_status(f"Capture interval: {self.capture_interval} seconds")
+            print_status(f"Max image dimension: {self.processor.max_size}px")
+            print_status(f"Voice mode: {'enabled' if self.voice_mode else 'disabled'}")
             
-            # Start voice processing if enabled
             if self.voice_mode and self.voice_processor:
                 self.voice_processor.start_listening()
-                print("Listening for voice commands starting with 'zero' or 'hey zero'...")
+                print_status("Listening for voice commands starting with 'zero' or 'hey zero'...")
             
             while True:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 if self.voice_mode:
-                    # In voice mode, only process when there's a command
                     command = self.get_voice_command()
                     if command:
-                        print(f"\n[{timestamp}] Voice command received, capturing frame...")
-                        
-                        # Capture and process frame
+                        print_header(f"[{timestamp}] Voice Command Received")
                         image_data, save_path, (width, height, mp) = self.capture_frame()
-                        print(f"Saved image to: {save_path}")
-                        print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
-                        
-                        # Process voice command
+                        print_success(f"Saved image to: {save_path}")
+                        print_status(f"Image size: {width}x{height}px ({mp:.2f} MP)")
                         self.process_voice_command(command)
-                        
-                        # Show command queue status
-                        status = self.voice_processor.get_command_status()
-                        print("\nCommand Queue Status:")
-                        for state, count in status.items():
-                            if count > 0:
-                                print(f"  {state}: {count}")
                 else:
-                    # Regular mode - process frames continuously
-                    print(f"\n[{timestamp}] Capturing frame...")
+                    print_header(f"[{timestamp}] Processing Frame")
                     image_data, save_path, (width, height, mp) = self.capture_frame()
-                    print(f"Saved image to: {save_path}")
-                    print(f"Image size: {width}x{height}px ({mp:.2f} MP)")
+                    print_success(f"Saved image to: {save_path}")
+                    print_status(f"Image size: {width}x{height}px ({mp:.2f} MP)")
                     
                     response = self.process_frame_with_voice(image_data, None)
-                    print(f"Analysis and execution results:\n{response}")
+                    print_status(f"Analysis and execution results:\n{response}")
                 
                 time.sleep(self.capture_interval)
                 
         except KeyboardInterrupt:
-            print("\nMonitoring stopped by user")
+            print_warning("\nMonitoring stopped by user")
         finally:
-            # Stop voice processing
-            if self.voice_mode and self.voice_processor:
-                self.voice_processor.stop_listening()
             self.cleanup()
 
     def cleanup(self):

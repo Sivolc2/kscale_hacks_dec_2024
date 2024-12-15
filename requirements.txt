@@ -20,3 +20,4 @@ openai
 elevenlabs
 pyyaml
 tenacity
+colorama
