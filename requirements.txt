@@ -2,3 +2,6 @@ anthropic
 httpx
 opencv-python
 pillow
+pygame
+onnxruntime
+matplotlib
