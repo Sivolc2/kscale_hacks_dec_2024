@@ -1,0 +1,25 @@
+robot:
+  imu:
+    enabled: false
+    mock_values:
+      accel:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+      gyro:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+  servos:
+    default_torque: 50.0
+    torque_enable: true
+    torque_scale: 0.8
+    walking_torque: 24.0
+testing:
+  walking:
+    duration: 5.0
+    pause_between: 3.0
+    torque_values:
+    - 48.0
+    - 44.0
+    - 40.0
