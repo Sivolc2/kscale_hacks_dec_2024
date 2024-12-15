@@ -11,15 +11,16 @@ robot:
         y: 0.0
         z: 0.0
   servos:
-    default_torque: 50.0
+    default_torque: 30.0
     torque_enable: true
-    torque_scale: 0.8
-    walking_torque: 30.0
+    torque_scale: 1.0
+    walking_torque: 24.0
 testing:
   walking:
     duration: 5.0
     pause_between: 3.0
     torque_values:
-    - 30.0
     - 28.0
     - 26.0
+    - 24.0
+    velocity_x: 0.2

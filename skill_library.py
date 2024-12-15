@@ -267,8 +267,16 @@ class SkillLibrary:
             requires_validation=False  # No validation needed for reset
         ))
 
-    def _zeroth_walk(self, robot: Robot, stop_event: threading.Event, cmd_vx=0.4):
+    def _zeroth_walk(self, robot: Robot, stop_event: threading.Event):
         """Implementation of walking for Zeroth robot using ONNX model"""
+        # Load parameters from yaml
+        with open(self.config_path, 'r') as f:
+            params = yaml.safe_load(f)
+        
+        # Get walking parameters
+        walking_params = params.get('testing', {}).get('walking', {})
+        cmd_vx = walking_params.get('velocity_x', 0.3)  # Default to 0.3 if not specified
+        
         print(f"Walking with velocity: {cmd_vx}")
         print("Restoring original offsets")
         

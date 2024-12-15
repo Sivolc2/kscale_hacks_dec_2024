@@ -150,10 +150,39 @@ class Robot:
         self.hal.servo.enable_movement()
 
     def set_initial_positions(self) -> None:
-        """Sets initial positions for all joints to 0 degrees."""
-        logger.info("Setting initial positions to 0.0 degrees.")
-        positions = {joint.name: 0.0 for joint in self.joints}
-        self.set_desired_positions(positions)
+        """Sets initial positions for all joints to their default standing pose.
+        
+        Uses pre-calibrated reset positions that have been tested to provide
+        a stable standing position for the robot.
+        """
+        logger.info("Setting initial standing positions...")
+        
+        initial_positions = {
+            # Left Leg
+            "left_hip_pitch": 28.4765625,      # ID 10
+            "left_hip_yaw": 42.71484375,       # ID 9
+            "left_hip_roll": 0.087890625,      # ID 8
+            "left_knee_pitch": -41.66015625,   # ID 7
+            "left_ankle_pitch": -17.578125,    # ID 6
+            
+            # Right Leg
+            "right_hip_pitch": -28.65234375,   # ID 5
+            "right_hip_yaw": -42.451171875,    # ID 4
+            "right_hip_roll": 0.0,             # ID 3
+            "right_knee_pitch": 41.572265625,  # ID 2
+            "right_ankle_pitch": 17.9296875,   # ID 1
+            
+            # Arms
+            "right_elbow_yaw": 0.0,            # ID 11
+            "right_shoulder_yaw": 0.0,         # ID 12
+            "right_shoulder_pitch": 0.17578125, # ID 13
+            "left_shoulder_pitch": -0.17578125, # ID 14
+            "left_shoulder_yaw": 0.0,          # ID 15
+            "left_elbow_yaw": 0.0              # ID 16
+        }
+        
+        self.set_desired_positions(initial_positions)
+        logger.info("Initial standing position set.")
 
     def get_feedback_positions(self) -> Dict[str, float]:
         """Gets feedback positions from the servos.
