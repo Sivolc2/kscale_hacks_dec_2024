@@ -1,11 +1,15 @@
 from enum import Enum
 from dataclasses import dataclass
-from typing import Dict, Callable, Optional, List, Any
+from typing import Dict, Callable, Optional, List, Any, Union
 import numpy as np
 import threading
 from robot import Robot, RobotConfig
 from model_controller import ModelController
+from model_handler import ModelHandler
 import os
+import time
+import base64
+import cv2
 
 class RobotPlatform(Enum):
     ZEROTH = "zeroth"
@@ -19,28 +23,177 @@ class RobotCommand:
     command_fn: Callable
     params: Dict[str, Any] = None
 
+# Define default joint positions with correct mapping and values
+RESET_POSITIONS = {
+    # Left Leg
+    "left_hip_pitch": 28.4765625,      # ID 10
+    "left_hip_yaw": 42.71484375,       # ID 9
+    "left_hip_roll": 0.087890625,      # ID 8
+    "left_knee_pitch": -41.66015625,   # ID 7
+    "left_ankle_pitch": -17.578125,    # ID 6
+    
+    # Right Leg
+    "right_hip_pitch": -28.65234375,   # ID 5
+    "right_hip_yaw": -42.451171875,    # ID 4
+    "right_hip_roll": 0.0,             # ID 3
+    "right_knee_pitch": 41.572265625,  # ID 2
+    "right_ankle_pitch": 17.9296875,   # ID 1
+    
+    # Arms
+    "right_elbow_yaw": 0.0,            # ID 11
+    "right_shoulder_yaw": 0.0,         # ID 12
+    "right_shoulder_pitch": 0.17578125, # ID 13
+    "left_shoulder_pitch": -0.17578125, # ID 14
+    "left_shoulder_yaw": 0.0,          # ID 15
+    "left_elbow_yaw": 0.0              # ID 16
+}
+
 @dataclass 
 class Skill:
     name: str
     description: str
     platform_commands: Dict[RobotPlatform, RobotCommand]
+    objective: Optional[str] = None
+    timeout_seconds: float = 30.0
+    check_interval: float = 2.0
+    requires_validation: bool = True
     affordance_fn: Optional[Callable[[], float]] = None
     
-    def get_affordance(self) -> float:
-        """Returns probability of successful execution from current state"""
-        if self.affordance_fn is None:
-            return 0.5
-        return self.affordance_fn()
+    def __post_init__(self):
+        """Initialize after dataclass initialization"""
+        self.model_handler = ModelHandler()
+    
+    def check_completion(self, robot: Robot, image: Optional[np.ndarray] = None, initial_image: Optional[np.ndarray] = None) -> bool:
+        """Check if skill execution is complete using LLM verification
+        
+        Args:
+            robot: Robot instance
+            image: Current camera image of robot
+            initial_image: Optional initial state image for comparison
+            
+        Returns:
+            bool: True if target state is reached
+        """
+        if not self.objective:
+            print(f"Warning: No objective defined for skill {self.name}")
+            return True
+            
+        if image is None:
+            print("Warning: No image provided for state verification")
+            return False
+            
+        # Convert current image to base64
+        success, buffer = cv2.imencode('.jpg', image)
+        if not success:
+            print("Error encoding current image")
+            return False
+        current_image_b64 = base64.b64encode(buffer).decode('utf-8')
+        
+        try:
+            print(f"\nChecking completion for skill '{self.name}'...")
+            print(f"Objective: {self.objective}")
+            
+            if initial_image is not None:
+                # Convert initial image to base64
+                success, buffer = cv2.imencode('.jpg', initial_image)
+                if not success:
+                    print("Error encoding initial image")
+                    return False
+                initial_image_b64 = base64.b64encode(buffer).decode('utf-8')
+                
+                # Use action agent with both images
+                decision = self.model_handler.action_agent_compare(
+                    self.name,
+                    self.objective,
+                    initial_image_b64,
+                    current_image_b64,
+                    previous_attempts=1
+                )
+            else:
+                # Use original single image check
+                decision = self.model_handler.action_agent(
+                    self.name,
+                    self.objective,
+                    current_image_b64,
+                    previous_attempts=1
+                )
+            
+            # Print decision for visibility
+            print("\nAction agent decision:")
+            print(f"Continue: {'Yes' if decision['continue_execution'] else 'No'}")
+            print(f"Reason: {decision['reason']}")
+            print("-" * 50)
+            
+            # If agent says don't continue, we've achieved the objective
+            return not decision["continue_execution"]
+            
+        except Exception as e:
+            print(f"Error during state verification: {e}")
+            return False
     
     def execute(self, platform: RobotPlatform, robot: Any, **kwargs):
-        """Execute the skill on the specified platform"""
+        """Execute the skill on the specified platform with LLM completion monitoring"""
         if platform not in self.platform_commands:
             raise ValueError(f"Platform {platform} not supported for skill {self.name}")
         
         cmd = self.platform_commands[platform]
         if cmd.params:
             kwargs.update(cmd.params)
-        return cmd.command_fn(robot, **kwargs)
+            
+        # Capture initial state image if robot has camera
+        initial_image = robot.get_camera_image() if hasattr(robot, 'get_camera_image') else None
+        
+        # Create stop event for interruptible skills
+        stop_event = threading.Event()
+        
+        # Start skill execution in separate thread
+        execution_thread = threading.Thread(
+            target=cmd.command_fn,
+            args=(robot,),
+            kwargs={"stop_event": stop_event, **kwargs}
+        )
+        execution_thread.start()
+        
+        start_time = time.time()
+        success = False
+        check_count = 0
+        
+        try:
+            # For skills that don't need validation, wait one cycle then return
+            if not self.requires_validation:
+                time.sleep(1.0)  # Wait for one cycle
+                success = True
+                print(f"Skill '{self.name}' completed (no validation required)")
+            else:
+                # Give the skill time to complete one cycle before first check
+                time.sleep(self.check_interval)
+                
+                # Monitor completion with reduced frequency
+                while time.time() - start_time < self.timeout_seconds:
+                    check_count += 1
+                    print(f"\nCheck #{check_count} at {time.time() - start_time:.1f}s:")
+                    
+                    current_image = robot.get_camera_image() if hasattr(robot, 'get_camera_image') else None
+                    
+                    if self.check_completion(robot, current_image, initial_image):
+                        success = True
+                        break
+                        
+                    time.sleep(self.check_interval)
+                
+            if not success:
+                print(f"\n✗ Skill '{self.name}' timed out after {self.timeout_seconds} seconds")
+                
+        except Exception as e:
+            print(f"\n✗ Error monitoring skill '{self.name}': {str(e)}")
+            success = False
+            
+        finally:
+            # Signal thread to stop and wait for it
+            stop_event.set()
+            execution_thread.join(timeout=2.0)
+            
+        return success
 
 class SkillLibrary:
     def __init__(self):
@@ -63,136 +216,53 @@ class SkillLibrary:
     
     def _initialize_basic_skills(self):
         """Initialize generic robot skills"""
-        # Basic movement skills
+        
+        # Stand skill
         self.add_skill(Skill(
             name="stand",
             description="Make the robot stand in a stable position",
             platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None
-                ),
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot: robot.set_desired_positions({
-                        "left_hip_pitch": 0.23 * 180/3.14159,
-                        "left_knee_pitch": -0.741 * 180/3.14159,
-                        "left_ankle_pitch": -0.5 * 180/3.14159,
-                        "right_hip_pitch": -0.23 * 180/3.14159,
-                        "right_knee_pitch": 0.741 * 180/3.14159,
-                        "right_ankle_pitch": 0.5 * 180/3.14159,
-                        "left_hip_yaw": 0.0,
-                        "right_hip_yaw": 0.0,
-                        "left_hip_roll": 0.0,
-                        "right_hip_roll": 0.0,
-                        "left_shoulder_pitch": 0.0,
-                        "right_shoulder_pitch": 0.0,
-                        "left_shoulder_yaw": 0.0,
-                        "right_shoulder_yaw": 0.0,
-                        "left_elbow_yaw": 0.0,
-                        "right_elbow_yaw": 0.0
-                    })
+                    command_fn=lambda robot, **kwargs: robot.set_desired_positions(RESET_POSITIONS)
                 )
-            }
+            },
+            objective="Robot is standing upright with both feet flat on the ground",
+            timeout_seconds=5.0,
+            check_interval=2.0,
+            requires_validation=True
         ))
 
+        # Walking skills
         self.add_skill(Skill(
             name="walk_forward",
             description="Make the robot walk forward",
             platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None  # Generic placeholder
-                ),
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, stop_event: self._zeroth_walk(robot, stop_event)
-                )
-            }
-        ))
-
-        self.add_skill(Skill(
-            name="walk_backward",
-            description="Make the robot walk backward",
-            platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None  # Generic placeholder
-                ),
-                RobotPlatform.ZEROTH: RobotCommand(
-                    platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, stop_event: self._zeroth_walk(
-                        robot, 
-                        stop_event, 
-                        cmd_vx=-0.4  # Negative velocity for backward walking
+                    command_fn=lambda robot, **kwargs: self._zeroth_walk(
+                        robot,
+                        kwargs.get('stop_event')
                     )
                 )
-            }
+            },
+            objective="Robot has moved forward while maintaining stable walking gait",
+            timeout_seconds=20.0,
+            check_interval=5.0,
+            requires_validation=True
         ))
 
-        self.add_skill(Skill(
-            name="wave",
-            description="Make the robot wave its arm",
-            platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None
-                ),
-                RobotPlatform.ZEROTH: RobotCommand(
-                    platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot: self._zeroth_wave(robot)
-                )
-            }
-        ))
-
-        self.add_skill(Skill(
-            name="recover_forward",
-            description="Recover from a forward fall",
-            platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None
-                ),
-                RobotPlatform.ZEROTH: RobotCommand(
-                    platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot: self._zeroth_forward_recovery(robot)
-                )
-            }
-        ))
-
-        # Add reset positions skill
-        reset_positions = {
-            "right_hip_yaw": 28.65234375,
-            "right_hip_pitch": 42.451171875,
-            "right_hip_roll": 0.0,
-            "right_knee_pitch": -41.572265625,
-            "right_ankle_pitch": -17.9296875,
-            "left_hip_yaw": -42.71484375,
-            "left_hip_pitch": -0.087890625,
-            "left_hip_roll": 41.66015625,
-            "left_knee_pitch": 17.578125,
-            "left_ankle_pitch": 0.0,
-            "right_shoulder_pitch": -0.17578125,
-            "right_shoulder_yaw": 0.0,
-            "left_shoulder_pitch": 0.17578125,
-            "left_shoulder_yaw": 0.0,
-            "right_elbow_yaw": 0.0,
-            "left_elbow_yaw": 0.0
-        }
-
+        # Reset positions skill
         self.add_skill(Skill(
             name="reset_positions",
             description="Reset all joints to their default positions",
             platform_commands={
-                RobotPlatform.GENERIC: RobotCommand(
-                    platform=RobotPlatform.GENERIC,
-                    command_fn=lambda robot: None  # Generic placeholder
-                ),
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot: robot.set_desired_positions(reset_positions)
+                    command_fn=lambda robot, **kwargs: robot.set_desired_positions(RESET_POSITIONS)
                 )
-            }
+            },
+            requires_validation=False  # No validation needed for reset
         ))
 
     def _zeroth_walk(self, robot: Robot, stop_event: threading.Event, cmd_vx=0.4):
@@ -273,7 +343,6 @@ class SkillLibrary:
 
     def _zeroth_forward_recovery(self, robot: Robot):
         """Implementation of forward recovery for Zeroth robot"""
-        import time
         
         # Reset joint offsets
         for joint in robot.joints:

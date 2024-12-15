@@ -5,9 +5,10 @@ Simplified Robot class with computations in degrees and direct position/velocity
 
 import subprocess
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from openlch import HAL
 import math
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -176,4 +177,12 @@ class Robot:
         self.hal.servo.set_torque_enable(
             [(servo_id, False) for servo_id in servo_ids]
         )
+
+    def get_camera_image(self) -> Optional[np.ndarray]:
+        """Get current camera image if available"""
+        if hasattr(self, 'monitor') and hasattr(self.monitor, 'cap'):
+            ret, frame = self.monitor.cap.read()
+            if ret:
+                return frame
+        return None
 

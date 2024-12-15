@@ -3,38 +3,78 @@ import cv2
 from datetime import datetime
 import os
 import argparse
+import yaml
+from pathlib import Path
 from image_processor import ImageProcessor
 from skill_library import SkillLibrary, RobotPlatform
 from typing import List, Tuple, Optional, Dict
 from robot import Robot
 import threading
 from model_handler import ModelHandler
-from voice_processor import Command, CommandState
+from voice_processor import Command, CommandState, WhisperVoiceProcessor
+
+def load_config(config_path: str = "config/config.yaml") -> Dict:
+    """Load configuration from yaml file"""
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            
+        # Add monitor-specific defaults if not present
+        if "monitor" not in config:
+            config["monitor"] = {
+                "capture_interval": 5.0,
+                "save_dir": "pictures/webcam",
+                "platform": "zeroth",
+                "voice_mode": False,
+                "whisper_model": "small"
+            }
+        return config
+    except Exception as e:
+        print(f"Error loading config from {config_path}: {e}")
+        raise
 
 class RobotMonitor:
-    def __init__(self, 
-                 capture_interval=5, 
-                 save_dir="pictures/webcam", 
-                 max_size=1568, 
-                 platform=RobotPlatform.ZEROTH,
-                 voice_mode=False,
-                 voice_processor=None):
-        """Initialize the robot monitoring system"""
+    def __init__(self, config_path: str = "config/config.yaml", **kwargs):
+        """Initialize the robot monitoring system
+        
+        Args:
+            config_path: Path to configuration file
+            **kwargs: Optional overrides for config values
+        """
+        # Load base configuration
+        self.config = load_config(config_path)
+        
+        # Override with any provided kwargs
+        monitor_config = self.config["monitor"]
+        for key, value in kwargs.items():
+            if value is not None:  # Only override if explicitly provided
+                monitor_config[key] = value
+        
+        # Initialize components
         self.model_handler = ModelHandler()
-        self.capture_interval = capture_interval
-        self.cap = None
-        self.save_dir = save_dir
+        self.capture_interval = monitor_config["capture_interval"]
+        self.save_dir = monitor_config["save_dir"]
         self.frame_count = 0
-        self.processor = ImageProcessor(max_size=max_size)
+        self.processor = ImageProcessor(config_path=config_path)
         self.skill_library = SkillLibrary()
-        self.platform = platform
+        self.platform = RobotPlatform[monitor_config["platform"].upper()]
         self.robot: Optional[Robot] = None
         self.walk_stop_event = None
         self.walk_thread = None
+        self.cap = None
         
         # Voice mode settings
-        self.voice_mode = voice_mode
-        self.voice_processor = voice_processor
+        self.voice_mode = monitor_config["voice_mode"]
+        self.voice_processor = None
+        if self.voice_mode:
+            try:
+                self.voice_processor = WhisperVoiceProcessor(
+                    model_name=monitor_config["whisper_model"]
+                )
+                print(f"Initialized Whisper voice processor with {monitor_config['whisper_model']} model")
+            except Exception as e:
+                print(f"Failed to initialize voice processor: {e}")
+                self.voice_mode = False
         
         # Create save directory if it doesn't exist
         os.makedirs(self.save_dir, exist_ok=True)
@@ -43,6 +83,7 @@ class RobotMonitor:
         """Initialize the robot hardware"""
         try:
             self.robot = Robot()
+            self.robot.monitor = self  # Give robot access to monitor for camera
             self.robot.initialize()
             print("Robot initialized successfully")
         except Exception as e:
@@ -62,43 +103,78 @@ class RobotMonitor:
             raise RuntimeError("Failed to capture frame")
         
         # Process the frame
-        image_data, image_info, processed_frame = self.processor.process_frame(frame)
+        image_data, metadata, processed_frame = self.processor.process_frame(frame)
         
         # Save the processed image
         self.frame_count += 1
         save_path = os.path.join(self.save_dir, f"pic_{self.frame_count}.jpg")
         cv2.imwrite(save_path, processed_frame)
         
-        return image_data, save_path, image_info
+        # Extract width, height, and megapixels from metadata
+        width = metadata["width"]
+        height = metadata["height"]
+        mp = metadata["megapixels"]
+        
+        return image_data, save_path, (width, height, mp)
 
     def process_frame_with_voice(self, image_data: str, voice_command: Optional[str] = None) -> str:
         """Process frame with optional voice command input"""
-        # Get model's analysis
-        response = self.model_handler.analyze_scene(
-            image_data, 
-            self.skill_library.get_skill_descriptions(),
-            voice_command
-        )
-        
-        # Validate response format
-        valid_steps = self.model_handler.validate_response(response)
-        if not valid_steps:
-            response += "\n\nNo valid steps were found in the response."
-            return response
+        try:
+            # Get sequence of skills and objectives from planning agent
+            task_pairs = self.model_handler.plan_tasks(
+                self.skill_library.get_skill_descriptions(),
+                image_data, 
+                voice_command
+            )
             
-        # Extract and execute skills
-        skills = self.model_handler.extract_skills(response, self.skill_library.skills)
-        if skills:
-            print("\nExecuting planned skills:")
-            results = self.run_skills(skills)
+            print("\nPlanned task sequence:")
+            for skill_name, objective in task_pairs:
+                print(f"- [{skill_name}]: {objective}")
             
-            # Add execution results to response
-            response += "\n\nExecution results:"
-            for skill, success in results.items():
-                status = "✓ Success" if success else "✗ Failed"
-                response += f"\n- [{skill}]: {status}"
-        
-        return response
+            # Execute each skill in sequence
+            for skill_name, objective in task_pairs:
+                attempts = 0
+                while True:
+                    print(f"\nExecuting {skill_name} (attempt {attempts + 1})")
+                    print(f"Objective: {objective}")
+                    
+                    success = self.execute_skill(skill_name)
+                    attempts += 1
+                    
+                    if not success:
+                        return f"Failed to execute skill: {skill_name}"
+                    
+                    # Capture new image after execution
+                    new_image_data, _, _ = self.capture_frame()
+                    
+                    # Get action agent's decision
+                    decision = self.model_handler.action_agent(
+                        skill_name,
+                        objective,
+                        new_image_data,
+                        attempts
+                    )
+                    
+                    print(f"\nAction agent decision:")
+                    print(f"Continue: {'Yes' if decision['continue_execution'] else 'No'}")
+                    print(f"Reason: {decision['reason']}")
+                    
+                    if not decision["continue_execution"]:
+                        break
+                        
+                    # Execute additional invocations if requested
+                    for _ in range(decision["num_invocations"]):
+                        print(f"\nExecuting additional {skill_name}")
+                        success = self.execute_skill(skill_name)
+                        attempts += 1
+                        if not success:
+                            return f"Failed during additional execution of {skill_name}"
+            
+            return f"Completed all planned tasks successfully"
+                
+        except Exception as e:
+            print(f"Error during execution: {e}")
+            return f"Error: {str(e)}"
 
     def run_skills(self, skills: List[str]) -> Dict[str, bool]:
         """
@@ -141,6 +217,16 @@ class RobotMonitor:
         """Execute a skill on the current platform"""
         if self.robot is None:
             raise RuntimeError("Robot not initialized. Call initialize_robot() first.")
+        
+        # Get current camera frame for verification
+        ret, frame = self.cap.read()
+        if ret:
+            # Process the frame
+            image_data, _, processed_frame = self.processor.process_frame(frame)
+            kwargs['image'] = processed_frame  # Pass the processed frame to skill execution
+        else:
+            print("Warning: Failed to capture frame for skill verification")
+        
         return self.skill_library.execute_skill(skill_name, self.platform, self.robot, **kwargs)
 
     def get_voice_command(self) -> Optional[Command]:
@@ -166,28 +252,43 @@ class RobotMonitor:
         return None
 
     def process_voice_command(self, command: Command) -> None:
-        """
-        Process and execute a voice command
-        Args:
-            command: Command object to process
-        """
+        """Process and execute a voice command"""
         try:
-            # Get model's analysis of the command
-            response = self.model_handler.plan_task(command.text, self.skill_library.get_skill_descriptions())
+            # Get planned tasks from model with retries
+            max_retries = 3
+            retry_delay = 1
+            last_error = None
             
-            # Extract skills from response
-            skills = self.model_handler.extract_skills(response, self.skill_library.skills)
+            for attempt in range(max_retries):
+                try:
+                    task_pairs = self.model_handler.plan_tasks(
+                        self.skill_library.get_skill_descriptions(),
+                        voice_command=command.text
+                    )
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        print(f"Attempt {attempt + 1} failed, retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        raise last_error
             
-            if skills:
-                print("\nExecuting planned skills:")
-                results = self.run_skills(skills)
+            if task_pairs:
+                print("\nExecuting planned tasks:")
+                for skill_name, objective in task_pairs:
+                    print(f"- [{skill_name}]: {objective}")
+                
+                # Execute the skills
+                results = self.run_skills([skill for skill, _ in task_pairs])
                 
                 # Update command state based on results
                 if all(results.values()):
                     self.voice_processor.update_command_state(
                         command,
                         CommandState.COMPLETED,
-                        f"Successfully executed: {', '.join(skills)}"
+                        f"Successfully executed all tasks"
                     )
                 else:
                     failed_skills = [skill for skill, success in results.items() if not success]
@@ -200,15 +301,16 @@ class RobotMonitor:
                 self.voice_processor.update_command_state(
                     command,
                     CommandState.FAILED,
-                    "No valid skills found in command"
+                    "No valid tasks planned from command"
                 )
                 
         except Exception as e:
-            print(f"Error processing voice command: {e}")
+            error_msg = f"Error processing voice command: {str(e)}"
+            print(error_msg)
             self.voice_processor.update_command_state(
                 command,
                 CommandState.FAILED,
-                f"Error: {str(e)}"
+                error_msg
             )
 
     def run_monitoring(self):
@@ -291,59 +393,49 @@ class RobotMonitor:
 def parse_args():
     parser = argparse.ArgumentParser(description='Robot Monitor with Webcam')
     parser.add_argument('-i', '--interval', 
-                       type=float, 
-                       default=5.0,
-                       help='Capture interval in seconds (default: 5.0)')
+                       type=float,
+                       help='Capture interval in seconds (overrides config)')
     parser.add_argument('-d', '--directory', 
-                       type=str, 
-                       default="pictures/webcam",
-                       help='Directory to save captured images (default: pictures/webcam)')
+                       type=str,
+                       help='Directory to save captured images (overrides config)')
     parser.add_argument('-c', '--camera', 
-                       type=int, 
-                       default=0,
-                       help='Camera device ID (default: 0)')
-    parser.add_argument('-s', '--max-size', 
-                       type=int, 
-                       default=1568,
-                       help='Maximum image dimension in pixels (default: 1568)')
+                       type=int,
+                       help='Camera device ID (overrides config)')
     parser.add_argument('-p', '--platform', 
-                       type=str, 
+                       type=str,
                        choices=['zeroth', 'generic'],
-                       default="zeroth",
-                       help='Robot platform (default: zeroth)')
+                       help='Robot platform (overrides config)')
     parser.add_argument('-v', '--voice-mode',
                        action='store_true',
-                       help='Enable voice command mode')
+                       help='Enable voice command mode (overrides config)')
     parser.add_argument('--whisper-model',
                        type=str,
                        choices=['tiny', 'base', 'small', 'medium', 'large'],
-                       default='small',
-                       help='Whisper model to use for voice recognition (default: small)')
+                       help='Whisper model to use (overrides config)')
+    parser.add_argument('--config',
+                       type=str,
+                       default="config/config.yaml",
+                       help='Path to configuration file')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     
-    # Initialize voice processor if voice mode enabled
-    voice_processor = None
-    if args.voice_mode:
-        try:
-            from voice_processor import WhisperVoiceProcessor
-            voice_processor = WhisperVoiceProcessor(model_name=args.whisper_model)
-            print(f"Initialized Whisper voice processor with {args.whisper_model} model")
-        except Exception as e:
-            print(f"Failed to initialize voice processor: {e}")
-            print("Running without voice mode")
-            args.voice_mode = False
+    # Create kwargs dict only for explicitly set arguments
+    override_kwargs = {
+        "capture_interval": args.interval,
+        "save_dir": args.directory,
+        "platform": args.platform,
+        "voice_mode": args.voice_mode if args.voice_mode else None,
+        "whisper_model": args.whisper_model
+    }
+    # Remove None values (unset arguments)
+    override_kwargs = {k: v for k, v in override_kwargs.items() if v is not None}
     
     # Initialize and run monitor
     monitor = RobotMonitor(
-        capture_interval=args.interval,
-        save_dir=args.directory,
-        max_size=args.max_size,
-        platform=RobotPlatform[args.platform.upper()],
-        voice_mode=args.voice_mode,
-        voice_processor=voice_processor
+        config_path=args.config,
+        **override_kwargs
     )
     
     try:
