@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import base64
 import argparse
+import yaml
 from skill_library import SkillLibrary, RobotPlatform, RESET_POSITIONS
 from robot import Robot
 from model_handler import ModelHandler
@@ -174,22 +175,116 @@ def parse_args():
     parser.add_argument('--dummy', 
                        action='store_true',
                        help='Use dummy black images instead of webcam')
+    parser.add_argument('--walk-only',
+                       action='store_true',
+                       help='Only test walking functionality without LLM validation')
+    parser.add_argument('--walk-duration',
+                       type=float,
+                       default=5.0,
+                       help='Duration of walking test in seconds (default: 5.0)')
+    parser.add_argument('--walk-multipliers',
+                       type=str,
+                       default="1.0,0.8,0.6",
+                       help='Comma-separated list of walking torque multipliers to test (default: 1.0,0.8,0.6)')
     return parser.parse_args()
+
+def test_walking(duration: float = None, walk_multipliers: str = None):
+    """Test walking functionality with different walking torque multipliers
+    
+    Args:
+        duration: Optional override for test duration in seconds
+        walk_multipliers: Optional override for multipliers as comma-separated string
+    """
+    print("\n=== Starting Walking Tests ===")
+    
+    # Load test parameters from yaml
+    with open("param.yaml", 'r') as f:
+        params = yaml.safe_load(f)
+    
+    # Get test parameters with CLI overrides
+    test_params = params.get('testing', {}).get('walking', {})
+    test_duration = duration or test_params.get('duration', 5.0)
+    yaml_multipliers = test_params.get('multipliers', [1.0, 0.8, 0.6])
+    pause_time = test_params.get('pause_between', 3.0)
+    
+    # Use CLI multipliers if provided, otherwise use yaml values
+    multipliers = [float(m) for m in walk_multipliers.split(',')] if walk_multipliers else yaml_multipliers
+    
+    print(f"\nTest parameters:")
+    print(f"Duration per test: {test_duration} seconds")
+    print(f"Pause between tests: {pause_time} seconds")
+    print(f"Testing multipliers: {multipliers}")
+    
+    skill_lib = SkillLibrary()
+    robot = Robot()
+    
+    try:
+        print("\nInitializing robot...")
+        robot.initialize()
+        
+        # Test each multiplier
+        for mult in multipliers:
+            print(f"\n--- Testing walking torque multiplier: {mult:.2f} ---")
+            
+            # Update param.yaml with new multiplier
+            params['robot']['servos']['walking_torque_multiplier'] = mult
+            
+            with open("param.yaml", 'w') as f:
+                yaml.safe_dump(params, f)
+            
+            print("\nResetting to initial position...")
+            robot.set_desired_positions(RESET_POSITIONS)
+            time.sleep(2)
+            
+            print(f"\nStarting walk test for {test_duration} seconds...")
+            stop_event = threading.Event()
+            walk_thread = threading.Thread(
+                target=lambda: skill_lib.execute_skill(
+                    "walk_forward",
+                    RobotPlatform.ZEROTH,
+                    robot,
+                    stop_event=stop_event
+                )
+            )
+            
+            walk_thread.start()
+            print("Walking started...")
+            time.sleep(test_duration)
+            print("Stopping walk...")
+            stop_event.set()
+            walk_thread.join(timeout=2)
+            
+            # Brief pause between tests
+            print(f"\nPausing for {pause_time} seconds between tests...")
+            time.sleep(pause_time)
+        
+        print("\nResetting to initial position...")
+        robot.set_desired_positions(RESET_POSITIONS)
+        time.sleep(2)
+        
+        print("\n=== Walking tests completed! ===")
+        
+    except Exception as e:
+        print(f"\nError during walking test: {str(e)}")
+        raise
+    finally:
+        print("\nDisabling motors...")
+        robot.disable_motors()
 
 if __name__ == "__main__":
     args = parse_args()
     
     print("=== Skill Library Test Suite ===")
-    print("This test suite verifies the functionality of the robot skill library")
-    print("It uses the actual robot hardware and LLM-based state verification")
     
     try:
-        # Run main functionality tests
-        test_skill_library(dummy_mode=args.dummy)
-        
-        # Run error case tests
-        test_error_cases()
-        
+        if args.walk_only:
+            test_walking(duration=args.walk_duration, walk_multipliers=args.walk_multipliers)
+        else:
+            # Run main functionality tests
+            test_skill_library(dummy_mode=args.dummy)
+            # Run error case tests
+            test_error_cases()
+            
         print("\n=== All tests completed successfully! ===")
         
     except KeyboardInterrupt:

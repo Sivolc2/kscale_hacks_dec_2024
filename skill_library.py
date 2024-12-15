@@ -10,6 +10,7 @@ import os
 import time
 import base64
 import cv2
+import yaml
 
 class RobotPlatform(Enum):
     ZEROTH = "zeroth"
@@ -196,8 +197,9 @@ class Skill:
         return success
 
 class SkillLibrary:
-    def __init__(self):
+    def __init__(self, config_path: str = "param.yaml"):
         self.skills: Dict[str, Skill] = {}
+        self.config_path = config_path
         # Initialize model controller with path to ONNX model
         self.model_controller = None
         try:
@@ -207,7 +209,7 @@ class SkillLibrary:
                 print(f"ERROR: Model file not found at absolute path: {os.path.abspath(model_path)}")
             else:
                 print(f"Found model at: {os.path.abspath(model_path)}")
-                self.model_controller = ModelController(model_path)
+                self.model_controller = ModelController(model_path, config_path)
                 print("Successfully loaded model controller")
         except Exception as e:
             print(f"ERROR: Could not load walking model: {str(e)}")
@@ -275,6 +277,29 @@ class SkillLibrary:
             print("Please ensure the ONNX model exists at ./models/walking_micro.onnx")
             print("Current working directory:", os.getcwd())
             raise RuntimeError("Walking model not initialized - missing ONNX file")
+        
+        # Get torque settings from params
+        with open(self.config_path, 'r') as f:
+            params = yaml.safe_load(f)
+        
+        # Get base torque settings
+        torque_scale = params['robot']['servos'].get('torque_scale', 1.0)
+        base_torque = params['robot']['servos'].get('default_torque', 20.0)
+        
+        # Optional walking torque multiplier (defaults to 1.0 if not specified)
+        walking_multiplier = params['robot']['servos'].get('walking_torque_multiplier', 1.0)
+        
+        # Calculate final torque as: base_torque * base_scale * walking_multiplier
+        final_torque = base_torque * torque_scale * walking_multiplier
+        
+        print(f"Setting walking torque to {final_torque:.1f} "
+              f"({torque_scale*100:.0f}% base scale × {walking_multiplier:.1f} walking multiplier)")
+        
+        # Set walking torque
+        servo_ids = [joint.servo_id for joint in robot.joints]
+        robot.hal.servo.set_torque(
+            [(servo_id, final_torque) for servo_id in servo_ids]
+        )
         
         # Restore walking offsets like in run.py
         robot.joint_dict["left_hip_pitch"].offset_deg = 0.23 * 180/3.14159
@@ -387,4 +412,3 @@ class SkillLibrary:
         if skill_name not in self.skills:
             raise ValueError(f"Skill {skill_name} not found")
         return self.skills[skill_name].execute(platform, robot, **kwargs)
-

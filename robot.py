@@ -9,6 +9,8 @@ from typing import List, Dict, Tuple, Optional, Any
 from openlch import HAL
 import math
 import numpy as np
+import yaml
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,14 +61,45 @@ class RobotConfig:
 class Robot:
     """Controls the robot's hardware and joint movements."""
 
-    def __init__(self):
+    def __init__(self, config_path: str = "param.yaml"):
         self.hal = HAL()
         self.config = RobotConfig()
         self.joints: List[Joint] = [
             Joint(**joint_config) for joint_config in self.config.joint_configs
         ]
         self.joint_dict: Dict[str, Joint] = {joint.name: joint for joint in self.joints}
-        self.imu = self.hal.imu
+        
+        # Load parameters
+        self.params = self._load_params(config_path)
+        
+        # Initialize IMU if enabled
+        if self.params['robot']['imu']['enabled']:
+            self.imu = self.hal.imu
+            logger.info("IMU enabled - using hardware IMU")
+        else:
+            self.imu = None
+            logger.info("IMU disabled - using mock values")
+
+    def _load_params(self, config_path: str) -> Dict:
+        """Load parameters from yaml file."""
+        try:
+            with open(config_path, 'r') as f:
+                params = yaml.safe_load(f)
+            return params
+        except Exception as e:
+            logger.warning(f"Failed to load config from {config_path}: {e}")
+            # Return default configuration
+            return {
+                'robot': {
+                    'imu': {
+                        'enabled': True,
+                        'mock_values': {
+                            'gyro': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+                            'accel': {'x': 0.0, 'y': 0.0, 'z': 0.0}
+                        }
+                    }
+                }
+            }
 
     def initialize(self) -> None:
         """Initializes the robot's hardware and joints."""
@@ -98,11 +131,20 @@ class Robot:
         available_servos = self.hal.servo.scan()
         logger.debug(f"Available servos: {available_servos}")
 
+        # Get torque settings from params
+        torque_enable = self.params['robot']['servos'].get('torque_enable', True)
+        torque_scale = self.params['robot']['servos'].get('torque_scale', 1.0)
+        base_torque = self.params['robot']['servos'].get('default_torque', self.config.torque_value)
+        
+        # Calculate scaled torque
+        scaled_torque = base_torque * torque_scale
+        logger.info(f"Setting torque to {scaled_torque:.1f} ({torque_scale*100:.0f}% of {base_torque})")
+
         self.hal.servo.set_torque_enable(
-            [(servo_id, self.config.torque_enable) for servo_id in servo_ids]
+            [(servo_id, torque_enable) for servo_id in servo_ids]
         )
         self.hal.servo.set_torque(
-            [(servo_id, self.config.torque_value) for servo_id in servo_ids]
+            [(servo_id, scaled_torque) for servo_id in servo_ids]
         )
 
         self.hal.servo.enable_movement()
@@ -188,12 +230,22 @@ class Robot:
         return None
 
     def get_imu_data(self) -> Dict[str, Any]:
-        """Get current IMU data.
+        """Get current IMU data with fallback to mock values.
         
         Returns:
             Dictionary containing gyroscope and accelerometer data
         """
-        return self.imu.get_data()
+        if not self.params['robot']['imu']['enabled']:
+            return self.params['robot']['imu']['mock_values']
+            
+        try:
+            if self.imu is not None:
+                return self.imu.get_data()
+            else:
+                return self.params['robot']['imu']['mock_values']
+        except Exception as e:
+            logger.warning(f"IMU read failed: {e}. Using mock values.")
+            return self.params['robot']['imu']['mock_values']
 
     def get_imu_orientation(self) -> Tuple[float, float, float]:
         """Get current IMU orientation (roll, pitch, yaw).

@@ -8,16 +8,23 @@ import numpy as np
 import onnxruntime as ort
 import threading
 from typing import Dict, Optional
+import yaml
 
 class ModelController:
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, config_path: str = "param.yaml"):
         """Initialize the model controller.
         
         Args:
             model_path: Path to the ONNX model file
+            config_path: Path to parameter configuration file
         """
         self.policy = ort.InferenceSession(model_path)
         self.cfg = self._init_config()
+        
+        # Load parameters
+        with open(config_path, 'r') as f:
+            self.params = yaml.safe_load(f)
+            
         self._print_config()
         
     def _init_config(self):
@@ -106,7 +113,7 @@ class ModelController:
             positions_leg = current_positions_np[: self.cfg.num_actions]
             velocities_leg = current_velocities_np[: self.cfg.num_actions]
 
-            # Replace mock IMU data with real data
+            # Get IMU data (will return mock values if IMU is disabled)
             imu_data = robot.get_imu_data()
             
             # Convert gyro from deg/s to rad/s
@@ -116,16 +123,14 @@ class ModelController:
                 imu_data['gyro']['z']
             ], dtype=np.float32) * np.pi / 180.0
 
-            # Convert accelerometer from mg to g and use it for rough euler angles
-            # This is a simple approximation - you might want to use a proper filter like Madgwick
+            # Convert accelerometer from mg to g
             accel = np.array([
                 imu_data['accel']['x'],
                 imu_data['accel']['y'],
                 imu_data['accel']['z']
             ], dtype=np.float32) / 1000.0  # mg to g
             
-            # Simple euler angle estimation from accelerometer
-            # Roll and pitch can be estimated from gravity vector, yaw cannot
+            # Calculate euler angles
             eu_ang = np.array([
                 np.arctan2(accel[1], accel[2]),  # roll
                 np.arctan2(-accel[0], np.sqrt(accel[1]**2 + accel[2]**2)),  # pitch
