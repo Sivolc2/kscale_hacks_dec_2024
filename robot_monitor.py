@@ -80,13 +80,14 @@ class RobotMonitor:
 
 For the task of moving to another spot: "{task_description}"
 
-Break this down into a sequence of skills from the above list. Format your response as:
+Break this down into a sequence of skills from the above list. You MUST format your response exactly as shown:
 1. [skill_name]: Brief justification
 2. [skill_name]: Brief justification
 ...
 
+IMPORTANT: Each skill name MUST be enclosed in square brackets []. 
 Only use skills from the provided list. Be concise but clear in your justifications.
-If there is nothing to do, just send the wave command
+If there is nothing to do, respond with: 1. [wave]: Default greeting action
 """
 
         # Get plan from Claude
@@ -116,16 +117,19 @@ If there is nothing to do, just send the wave command
 
     def extract_skills_from_response(self, response: str) -> List[str]:
         """
-        Extract skill names from Claude's response
+        Extract skill names from Claude's response using stricter regex
         Returns list of skill names in order
         """
         skills = []
-        # Look for numbered list items with [skill_name]
+        # Look for numbered list items with [skill_name]:
         for line in response.split('\n'):
-            if re.match(r'^\d+\.\s*\[([^\]]+)\]', line):
-                skill_name = re.findall(r'\[([^\]]+)\]', line)[0]
+            matches = re.findall(r'^\d+\.\s*\[([^\]]+)\]:', line)
+            if matches:
+                skill_name = matches[0].strip()
                 if skill_name in self.skill_library.skills:
                     skills.append(skill_name)
+                else:
+                    print(f"Warning: Unknown skill '{skill_name}' found in response")
         return skills
 
     def run_skills(self, skills: List[str]) -> Dict[str, bool]:
@@ -185,40 +189,61 @@ If there is nothing to do, just send the wave command
                         {
                             "type": "text", 
                             "text": f"""Given an external view of a robot. What task needs to be done?
-                            After describing the scene, break down the needed task into specific steps using available skills:
+                            After describing the scene, break down the needed task into specific steps using available skills.
                             
                             Available skills:
                             {self.skill_library.get_skill_descriptions()}
                             
-                            Format your response as:
-                            Scene description: [brief description]
-                            Required task: [task description]
+                            You MUST format your response EXACTLY as shown:
+                            Scene description: <brief description>
+                            Required task: <task description>
                             Planned steps:
                             1. [skill_name]: Brief justification
                             2. [skill_name]: Brief justification
-                            ..."""
+                            ...
+
+                            IMPORTANT RULES:
+                            - Each skill name MUST be enclosed in square brackets []
+                            - Only use skills from the provided list
+                            - Each step MUST start with a number followed by a period
+                            - Each step MUST have exactly one pair of square brackets
+                            - Each step MUST have a colon and justification after the brackets"""
                         }
                     ],
                 }
             ],
         )
         
-        response = message.content
+        # Extract the text content from the response
+        response_content = message.content[0].text if isinstance(message.content, list) else message.content
+        
+        # Add stricter validation of response format
+        if "Planned steps:" in response_content:
+            steps = response_content.split("Planned steps:")[1].strip().split("\n")
+            valid_steps = []
+            for step in steps:
+                if re.match(r'^\d+\.\s*\[[^\]]+\]:', step):
+                    valid_steps.append(step)
+                else:
+                    print(f"Warning: Invalid step format: {step}")
+            
+            if not valid_steps:
+                print("Warning: No valid steps found in response")
+                response_content += "\n\nNo valid steps were found in the response."
         
         # Extract and execute skills if task identified
-        if "Required task:" in response:
-            skills = self.extract_skills_from_response(response)
-            if skills:
-                print("\nExecuting planned skills:")
-                results = self.run_skills(skills)
-                
-                # Add execution results to response
-                response += "\n\nExecution results:"
-                for skill, success in results.items():
-                    status = "✓ Success" if success else "✗ Failed"
-                    response += f"\n- {skill}: {status}"
+        skills = self.extract_skills_from_response(response_content)
+        if skills:
+            print("\nExecuting planned skills:")
+            results = self.run_skills(skills)
             
-        return response
+            # Add execution results to response
+            response_content += "\n\nExecution results:"
+            for skill, success in results.items():
+                status = "✓ Success" if success else "✗ Failed"
+                response_content += f"\n- [{skill}]: {status}"
+        
+        return response_content
 
     def execute_skill(self, skill_name: str, **kwargs):
         """Execute a skill on the current platform"""
