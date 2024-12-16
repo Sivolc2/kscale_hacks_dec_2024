@@ -210,22 +210,19 @@ class SkillLibrary:
             requires_validation=True
         ))
 
-        # Slow walk skill
+        # Wave skill
         self.add_skill(Skill(
-            name="slow_walk",
-            description="Make the robot walk forward slowly and carefully using pre-defined positions",
+            name="wave",
+            description="Make the robot wave its left arm in greeting",
             platform_commands={
                 RobotPlatform.ZEROTH: RobotCommand(
                     platform=RobotPlatform.ZEROTH,
-                    command_fn=lambda robot, **kwargs: self._zeroth_slow_walk(
-                        robot,
-                        kwargs.get('stop_event')
-                    )
+                    command_fn=lambda robot, **kwargs: self._zeroth_wave(robot)
                 )
             },
-            objective="Robot has moved forward slowly while maintaining stability",
-            timeout_seconds=20.0,
-            check_interval=5.0,
+            objective="Robot has completed a waving gesture with its left arm",
+            timeout_seconds=5.0,
+            check_interval=1.0,
             requires_validation=True
         ))
 
@@ -313,28 +310,48 @@ class SkillLibrary:
         """Implementation of waving for Zeroth robot"""
         import time
         
-        initial_positions = {
-            "left_shoulder_yaw": 0.0,
-            "left_shoulder_pitch": 0.0,
-            "left_elbow_yaw": 0.0,
+        # Store initial arm positions
+        base_positions = {
+            "left_shoulder_pitch": 1.318359375,
+            "left_shoulder_yaw": -13.623046875,
+            "left_elbow_yaw": 0.087890625,
+            # Include other joints to maintain stability
+            "left_hip_pitch": 46.7578125,
+            "left_hip_roll": -7.119140625,
+            "left_hip_yaw": 39.7265625,
+            "left_knee_pitch": -39.19921875,
+            "right_hip_pitch": -43.330078125,
+            "right_hip_roll": 2.021484375,
+            "right_hip_yaw": -44.208984375,
+            "right_knee_pitch": 29.619140625
         }
-        robot.set_desired_positions(initial_positions)
-        time.sleep(0.5)
 
-        wave_up_positions = {
-            "left_shoulder_pitch": 0.0,
-            "left_shoulder_yaw": 150.0,
-        }
+        # Raise arm position
+        wave_up_positions = base_positions.copy()
+        wave_up_positions.update({
+            "left_shoulder_pitch": 1.318359375,  # Keep pitch stable
+            "left_shoulder_yaw": 120.0,          # Raise arm sideways
+            "left_elbow_yaw": 0.087890625       # Keep elbow straight initially
+        })
         robot.set_desired_positions(wave_up_positions)
         time.sleep(0.5)
 
-        for _ in range(6):
-            robot.set_desired_positions({"left_elbow_yaw": -90.0})
-            time.sleep(0.3)
-            robot.set_desired_positions({"left_elbow_yaw": -45.0})
+        # Wave motion
+        for _ in range(4):  # Reduced number of waves for quicker gesture
+            wave_positions = wave_up_positions.copy()
+            
+            # Wave forward
+            wave_positions["left_elbow_yaw"] = -90.0
+            robot.set_desired_positions(wave_positions)
             time.sleep(0.3)
             
-        robot.set_desired_positions(initial_positions)
+            # Wave back
+            wave_positions["left_elbow_yaw"] = 90.0
+            robot.set_desired_positions(wave_positions)
+            time.sleep(0.3)
+            
+        # Return to initial positions
+        robot.set_desired_positions(base_positions)
         time.sleep(0.5)
 
     def _zeroth_forward_recovery(self, robot: Robot):

@@ -29,8 +29,8 @@ robot:
     right_shoulder_yaw: 3.955078125
   model:
     joint_offsets:
-      left_hip_pitch: -6.0
-      right_hip_pitch: 6.0
+      left_hip_pitch: -7.0
+      right_hip_pitch: 7.0
   servos:
     default_torque: 30.0
     torque_enable: true
