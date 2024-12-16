@@ -65,23 +65,15 @@ class ModelController:
         print()
 
     def run_inference(self, robot, stop_event: threading.Event, cmd_vx=0.4, cmd_vy=0.0, cmd_dyaw=0.0):
-        """Run model inference loop.
-        
-        Args:
-            robot: Robot instance
-            stop_event: Threading event to stop inference
-            cmd_vx: Forward velocity command
-            cmd_vy: Lateral velocity command 
-            cmd_dyaw: Yaw rate command
-        """
+        """Run model inference loop."""
         action = np.zeros((self.cfg.num_actions), dtype=np.double)
-        
-        # Load hip adjustment from params
-        with open("param.yaml", 'r') as f:
-            params = yaml.safe_load(f)
-        hip_adjust = params['robot']['servos'].get('hip_adjust', 20.0)  # Default to 20.0 if not found
-        
-        print(f"Using hip adjustment of {hip_adjust} degrees for walking stability")
+
+        # Load joint offsets from params
+        joint_offsets = self.params.get('robot', {}).get('model', {}).get('joint_offsets', {})
+        if joint_offsets:
+            print("Using joint offsets from config:")
+            for joint, offset in joint_offsets.items():
+                print(f"  {joint}: {offset} degrees")
 
         hist_obs = deque()
         for _ in range(self.cfg.frame_stack):
@@ -108,9 +100,10 @@ class ModelController:
             feedback_positions = robot.get_feedback_positions()
             feedback_velocities = robot.get_feedback_velocities()
 
-            # Add hip adjustment for stability
-            feedback_positions["left_hip_pitch"] += hip_adjust
-            feedback_positions["right_hip_pitch"] -= hip_adjust
+            # # Apply joint offsets if configured
+            # for joint, offset in joint_offsets.items():
+            #     if joint in feedback_positions:
+            #         feedback_positions[joint] += offset
 
             # Convert to radians
             current_positions_np = np.radians(
@@ -188,6 +181,12 @@ class ModelController:
             desired_positions_dict = {
                 name: position for name, position in zip(joint_names, full_action_deg)
             }
+            
+            # Apply joint offsets before sending to robot
+            for joint, offset in joint_offsets.items():
+                if joint in desired_positions_dict:
+                    desired_positions_dict[joint] += offset
+                    
             robot.set_desired_positions(desired_positions_dict)
 
             # Timing control

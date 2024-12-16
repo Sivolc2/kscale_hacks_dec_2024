@@ -207,32 +207,43 @@ class RobotMonitor:
         results = {}
         for skill_name in skills:
             try:
-                print(f"\nExecuting skill: {skill_name}")
+                print_action(f"Executing skill: {skill_name}")
                 
-                if skill_name == "walk_forward":
-                    # Handle walking specially with threading
+                # Handle walking skills with threading
+                if skill_name in ["speed_walk", "slow_walk"]:
                     self.walk_stop_event = threading.Event()
                     self.walk_thread = threading.Thread(
-                        target=lambda: self.execute_skill(
-                            "walk_forward",
+                        target=lambda: self.skill_library.execute_skill(
+                            skill_name,
+                            RobotPlatform.ZEROTH,
+                            self.robot,
                             stop_event=self.walk_stop_event
                         )
                     )
                     self.walk_thread.start()
-                    # Let it walk for 5 seconds
-                    time.sleep(5)
+                    
+                    # Let it walk for configured duration
+                    walk_duration = self.config.get('skills', {}).get('walk_duration', 5.0)
+                    print_status(f"Walking for {walk_duration} seconds...")
+                    time.sleep(walk_duration)
+                    
+                    print_status("Stopping walk...")
                     self.walk_stop_event.set()
                     self.walk_thread.join(timeout=2)
                     self.walk_stop_event = None
                     self.walk_thread = None
                 else:
                     # Execute other skills normally
-                    self.execute_skill(skill_name)
+                    self.skill_library.execute_skill(
+                        skill_name,
+                        RobotPlatform.ZEROTH,
+                        self.robot
+                    )
                     
                 results[skill_name] = True
-                print(f"Successfully executed: {skill_name}")
+                print_success(f"Successfully executed: {skill_name}")
             except Exception as e:
-                print(f"Failed to execute {skill_name}: {e}")
+                print_error(f"Failed to execute {skill_name}: {e}")
                 results[skill_name] = False
         return results
 

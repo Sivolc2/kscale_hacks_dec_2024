@@ -196,13 +196,11 @@ def test_walking(duration: float = None, torque_values: str = None):
     
     # Get test parameters
     test_params = params.get('testing', {}).get('walking', {})
-    hip_adjust = params['robot']['servos'].get('hip_adjust', 20.0)
-    
     if not test_params:
         raise ValueError("Missing required 'testing.walking' configuration in param.yaml")
         
     step_duration = 0.8  # Duration of each step in seconds
-    pause_duration = 0.3  # Time to pause between steps
+    pause_duration = 0.0 # Reduced from 0.3 to 0.1 for smoother transitions
     num_steps = 3        # Number of steps per test
     
     # Use CLI torque values if provided, otherwise use yaml values
@@ -217,7 +215,6 @@ def test_walking(duration: float = None, torque_values: str = None):
     print(f"Step duration: {step_duration} seconds")
     print(f"Pause duration: {pause_duration} seconds")
     print(f"Steps per test: {num_steps}")
-    print(f"Hip adjustment: {hip_adjust} degrees")
     print(f"Testing torque values: {torques}")
     
     skill_lib = SkillLibrary()
@@ -227,7 +224,7 @@ def test_walking(duration: float = None, torque_values: str = None):
         print("\nInitializing robot...")
         robot.initialize()
         
-        # Test sequence: slow walk -> speed walk for each torque value
+        # Test sequence: speed walk for each torque value
         for torque in torques:
             print(f"\n=== Testing torque: {torque:.1f} ===")
             
@@ -236,43 +233,15 @@ def test_walking(duration: float = None, torque_values: str = None):
             with open("param.yaml", 'w') as f:
                 yaml.safe_dump(params, f)
             
-            # Test slow walk
-            print("\n--- Testing Slow Walk ---")
-            print("Setting initial position...")
-            robot.set_initial_positions()
-            time.sleep(1.0)
-            
-            for step in range(num_steps):
-                print(f"\nSlow walk step {step + 1}/{num_steps}")
-                stop_event = threading.Event()
-                walk_thread = threading.Thread(
-                    target=lambda: skill_lib.execute_skill(
-                        "slow_walk",
-                        RobotPlatform.ZEROTH,
-                        robot,
-                        stop_event=stop_event
-                    )
-                )
-                
-                walk_thread.start()
-                time.sleep(step_duration)
-                
-                print("Stopping step...")
-                stop_event.set()
-                walk_thread.join(timeout=1.0)
-                
-                # Simple pause between steps
-                time.sleep(pause_duration)
-            
-            # Reset before speed walk
-            print("\nResetting position before speed walk...")
+            # Reset before walking
+            print("\nResetting position before walk...")
             robot.set_initial_positions()
             time.sleep(2.0)
             
             # Test speed walk
             print("\n--- Testing Speed Walk ---")
             for step in range(num_steps):
-                print(f"\nSpeed walk step {step + 1}/{num_steps}")
+                print(f"\nWalk step {step + 1}/{num_steps}")
                 stop_event = threading.Event()
                 walk_thread = threading.Thread(
                     target=lambda: skill_lib.execute_skill(
@@ -291,7 +260,7 @@ def test_walking(duration: float = None, torque_values: str = None):
                 walk_thread.join(timeout=1.0)
                 
                 # Simple pause between steps
-                time.sleep(pause_duration)
+                # time.sleep(pause_duration)
         
         print("\nFinal reset to initial position...")
         robot.set_initial_positions()

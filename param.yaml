@@ -13,53 +13,35 @@ robot:
   initial_positions:
     left_ankle_pitch: -14.23828125
     left_elbow_yaw: 0.087890625
-    left_hip_pitch: 10.7578125
+    left_hip_pitch: 46.7578125
     left_hip_roll: -7.119140625
     left_hip_yaw: 39.7265625
-    left_knee_pitch: -10.19921875
+    left_knee_pitch: -39.19921875
     left_shoulder_pitch: 1.318359375
     left_shoulder_yaw: -13.623046875
     right_ankle_pitch: 12.48046875
     right_elbow_yaw: -0.087890625
-    right_hip_pitch: -10.330078125
+    right_hip_pitch: -43.330078125
     right_hip_roll: 2.021484375
     right_hip_yaw: -44.208984375
-    right_knee_pitch: 10.619140625
+    right_knee_pitch: 29.619140625
     right_shoulder_pitch: -8.876953125
     right_shoulder_yaw: 3.955078125
+  model:
+    joint_offsets:
+      left_hip_pitch: -6.0
+      right_hip_pitch: 6.0
   servos:
     default_torque: 30.0
     torque_enable: true
     torque_scale: 1.0
     walking_torque: 28.0
-    hip_adjust: 20.0
-  walk_positions:
-    slow:
-    # ankle_pitch (for foot angle during drag)
-    # knee_pitch (slight bend)
-    # hip_pitch (forward tilt)
-      left_ankle_pitch: -10.23828125
-      left_elbow_yaw: 0.087890625
-      left_hip_pitch: 15.7578125
-      left_hip_roll: -7.119140625
-      left_hip_yaw: 39.7265625
-      left_knee_pitch: -5.19921875
-      left_shoulder_pitch: 1.318359375
-      left_shoulder_yaw: -13.623046875
-      right_ankle_pitch: 12.48046875
-      right_elbow_yaw: -0.087890625
-      right_hip_pitch: -10.330078125
-      right_hip_roll: 2.021484375
-      right_hip_yaw: -44.208984375
-      right_knee_pitch: 10.619140625
-      right_shoulder_pitch: -8.876953125
-      right_shoulder_yaw: 3.955078125
 testing:
+  skills:
+    walk_duration: 5.0
   walking:
     duration: 5.0
     pause_between: 3.0
     torque_values:
     - 28.0
-    - 26.0
-    - 24.0
-    velocity_x: 0.05
+    velocity_x: 0.1
