@@ -205,6 +205,14 @@ def test_walking(duration: float = None, torque_values: str = None):
     pause_duration = 0.3  # Time to pause between steps
     num_steps = 3        # Number of steps per test
     
+    # Use CLI torque values if provided, otherwise use yaml values
+    if torque_values:
+        torques = [float(t) for t in torque_values.split(',')]
+    else:
+        torques = test_params.get('torque_values')
+        if not torques:
+            raise ValueError("Missing required 'torque_values' in param.yaml testing.walking configuration")
+    
     print(f"\nTest parameters:")
     print(f"Step duration: {step_duration} seconds")
     print(f"Pause duration: {pause_duration} seconds")
