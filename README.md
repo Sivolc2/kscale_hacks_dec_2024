@@ -1,131 +1,54 @@
-# PROJECT ZERO - Voice-Controlled Robot with Digital Twin
+# PROJECT ZERO - Building a More Capable Robot Through Skill Sharing
 
-A hackathon project that combines voice control, computer vision, and digital twin capabilities to create an extensible robot control system.
+Over an intense 36-hour hackathon, our team set out to revolutionize how robots learn and share skills. We envisioned a future where robots could not only learn from human demonstrations but also from each other, creating a growing library of capabilities that any compatible robot could tap into.
 
-## Overview
+## Our Journey
 
-This project enables:
+What started as a wild idea turned into something incredible. We combined voice control, computer vision, and a digital twin system to create a robot that's not just programmable, but truly interactive. Imagine speaking to your robot as naturally as you would to a friend, and watching it understand and execute complex tasks. That's what we achieved with Project Zero.
 
-- Voice control of a robot using natural language commands
-- Real-time computer vision monitoring and feedback
-- Digital twin simulation for testing and creating new skills
-- Extensible skill library that can be expanded through demonstration
+The heart of our project lies in its extensible skills framework. We wanted to break away from the traditional model where each robot operates in isolation. Instead, we built a platform where skills can be created through various methods - from direct demonstration to reinforcement learning - and shared across different robots.
 
-## Key Components
+## The Hardware Sstack
 
-### Robot Monitor (`robot_monitor.py`)
-- Main control loop integrating voice, vision and robot control
-- Processes voice commands using Whisper
-- Captures and analyzes camera frames
-- Executes skills based on voice/vision input
+One of our proudest achievements is the modular tool system we designed. After countless hours in OnShape and several 3D printing iterations, we created an elegant quick-attach mechanism that allows our robot to use different tools. Our first success was a custom-designed beer can holder (because why not?), but we've got plans for more practical attachments like hooks, whisks, and forks. The possibilities are endless! The following is a CAD file of our modular hand: https://cad.onshape.com/documents/c793fce9991582313080b3a9/w/49260d9832ed2563113c8700/e/cf6d5ce4b4362395c19bbd5c?configuration=default&renderMode=0&uiState=675f5fbabe4315572f93ba0c 
 
-### Digital Twin (`digital_twin.py`) 
-- MuJoCo-based simulation environment
-- Supports bi-directional sync between real robot and simulation
-- Record and playback capabilities for creating new skills
-- Three modes:
-  - `sim-to-robot`: Simulation controls robot
-  - `robot-to-sim`: Robot movements reflected in sim
-  - `playback`: Replay recorded movements
+We also tackled the power problem head-on by building our own power supply from scratch. It wasn't just about providing juice to the motors - we needed something that could handle the demands of real-world operation while being reliable enough for continuous use.
 
-### Skill Library (`skill_library.py`)
-- Extensible library of robot behaviors
-- Skills can be created through digital twin recording
-- Each skill has clear objectives and validation
-- Platform-agnostic design
+## The Software Stack
 
-### Model Handler (`model_handler.py`)
-- Uses Claude 3 Sonnet for:
-  - Scene analysis
-  - Task planning
-  - Movement validation
-- Provides natural language interface
+Our software architecture is where things get really exciting. We integrated:
+- A MuJoCo-based digital twin for testing and skill creation
+- Voice control using Whisper for natural language commands
+- Claude 3 Sonnet for high-level task understanding and planning
+- Custom PPO implementations for learning from demonstrations
 
-## Getting Started
+The real breakthrough came when we got all these systems working together seamlessly. You can now teach the robot new skills in multiple ways:
+- Demonstrate the movement directly and record it
+- Create precise movements in simulation
+- Let the robot learn through reinforcement learning
+- Or even combine these methods for more complex behaviors
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-2. Configure settings in `config/config.yaml`:
-```yaml
-monitor:
-    capture_interval: 5.0
-    save_dir: "pictures/webcam"
-    platform: "zeroth"
-    voice_mode: true
-    whisper_model: "small"
-```
-3. Run the robot monitor:
-```bash
-python robot_monitor.py
-```
+## Looking Forward
 
-4. Create new skills using digital twin:
-```bash
-python digital_twin.py
-```
+While we're incredibly proud of what we accomplished in 36 hours, we see this as just the beginning. Our modular design and extensible skill library create endless possibilities for future development. We're excited to see how the community might build upon this foundation to create even more capable robots. We would love to continue to extend the possibility of the the Zeroth bot for future developers and roboticians
 
+## Technical Deep Dive
 
-## Creating New Skills
+### The Magic of Our Digital Twin
+The digital twin environment is one of our favorite achievements. Built on MuJoCo, it provides a perfect sandbox for testing new ideas. Want to try a risky movement sequence? Test it in simulation first! The bi-directional sync means you can:
+- Watch your real robot's movements mirrored in real-time
+- Test new skills safely before deploying them
+- Record and replay complex sequences
+- Train learning algorithms without risking hardware
 
-1. Launch digital twin in `robot-to-sim` mode
-2. Press 'R' to start recording
-3. Move robot through desired motion sequence
-4. Press 'R' again to save recording
-5. New skill will be saved to `episodes/` directory
-6. Add skill definition to `skill_library.py`
+### Voice Control & Natural Language Understanding
+"Hey Zero, could you grab that can?" - our robot is able to respond to speech commands. We integrated Whisper for speech recognition and Claude 3 Sonnet for understanding intent. The system can:
+- Parse complex natural language commands
+- Understand context from visual input
+- Break down complex tasks into simple movements
+- Provide verbal feedback on task progress
 
-## Voice Commands
+# Acknowledgements
+This project taught us so much more than we expected. We dove deep into the Zeroth bot SDK, wrestled with IMU calibration issues (thank you, Kelsey!), and learned the intricacies of battery management (couldn't have done it without JX's guidance). Denys was invaluable in helping us fine-tune our calibration processes.
 
-The robot responds to commands starting with "zero" or "hey zero". Examples:
-
-- "Zero, please stand up"
-- "Hey zero, walk forward"
-- "Zero, wave hello"
-
-## Requirements
-
-- Python 3.8+
-- MuJoCo 2.3.3+
-- OpenCV
-- PyTorch
-- Anthropic API key (for Claude)
-- Webcam/Camera
-- Compatible robot hardware
-
-## Project Structure
-
-```bash
-.
-├── config/
-│ └── config.yaml
-├── robot_monitor.py # Main control loop
-├── digital_twin.py # Simulation environment
-├── skill_library.py # Robot behaviors
-├── model_handler.py # AI model integration
-├── robot.py # Hardware interface
-├── image_processor.py # Vision processing
-├── voice_processor.py # Speech processing
-└── episodes/ # Recorded skills
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add new skills or improvements
-4. Submit a pull request
-
-## License
-
-MIT License
-
-## Acknowledgments
-
-- MuJoCo physics engine
-- Claude 3 Sonnet
-- OpenAI Whisper
-- Anthropic API
-
-
+The K-Scale and Zeroth bot teams provided incredible support throughout the hackathon. Their simulation environment and robust hardware platform gave us the foundation we needed to build something truly special.
